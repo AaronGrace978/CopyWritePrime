@@ -225,11 +225,18 @@ function cleanModelText(out: string) {
     .trim();
 }
 
+function briefNote(brief?: string) {
+  const text = brief?.trim();
+  if (!text) return "";
+  return `\n\nThey are writing against this scanned paper. Stay on its structure, limits, and any compliance rules. Do not restate the paper.\n---\n${text.slice(0, 8000)}`;
+}
+
 export async function flowContinue(
   settings: Settings,
   preceding: string,
   onDelta: (c: string) => void,
   signal?: AbortSignal,
+  brief?: string,
 ) {
   const trimmed = preceding.trim();
   if (trimmed.length < 8) return "";
@@ -244,9 +251,10 @@ export async function flowContinue(
       {
         role: "system",
         content: writerSystem(
-          enhance
+          (enhance
             ? "You are in the sentence with the writer. They type fast and messy. Continue 15–40 words in their voice, slightly sharper and more concrete. Finish the thought they started. No quotes, no preamble, no restarting what they already wrote. If the thought is complete, return nothing."
-            : "You are in the sentence with the writer. They type fast and messy. Continue 10–28 words in their exact voice as they meant it. Finish the fragment if it is unfinished. No quotes, no preamble, no restarting. If the thought is complete, return nothing.",
+            : "You are in the sentence with the writer. They type fast and messy. Continue 10–28 words in their exact voice as they meant it. Finish the fragment if it is unfinished. No quotes, no preamble, no restarting. If the thought is complete, return nothing.") +
+            briefNote(brief),
         ),
       },
       { role: "user", content: tail },
@@ -305,17 +313,19 @@ export async function enhanceSentence(settings: Settings, sentence: string, sign
   return cleaned;
 }
 
-export async function transform(settings: Settings, instruction: string, source: string) {
+export async function transform(settings: Settings, instruction: string, source: string, brief?: string) {
   let out = "";
+  const long = source.trim().split(/\s+/).filter(Boolean).length > 80;
   await streamChat({
     settings,
-    maxTokens: 1800,
+    maxTokens: long ? 4000 : 1800,
     temperature: 0.55,
     messages: [
       {
         role: "system",
         content: writerSystem(
-          "Rewrite or generate copy per the instruction. Return only the copy. You may use markdown: # ## ### headings, **bold**, *italic*. No commentary. No code fences.",
+          "Rewrite or generate copy per the instruction. Return only the copy. You may use markdown: # ## ### headings, **bold**, *italic*. No commentary. No code fences. If the source is long, keep every section. Do not collapse it to one paragraph." +
+            briefNote(brief),
         ),
       },
       {
@@ -328,6 +338,38 @@ export async function transform(settings: Settings, instruction: string, source:
     },
   });
   return cleanModelText(out);
+}
+
+export async function completeFromBrief(
+  settings: Settings,
+  brief: string,
+  existing: string,
+  onDelta: (chunk: string) => void,
+  signal?: AbortSignal,
+) {
+  const paper = brief.trim().slice(0, 24000);
+  const draft = existing.trim().slice(0, 8000);
+  return streamChat({
+    settings,
+    maxTokens: 4000,
+    temperature: 0.5,
+    signal,
+    messages: [
+      {
+        role: "system",
+        content: writerSystem(
+          "You complete take-homes, briefs, RFPs, and assignments. Read the paper. Infer the required parts, word limits, tone, and any compliance kit. Write the finished submission a strong human would turn in. Honor every constraint. Make guardrails invisible in the copy — do not list banned phrases. Use markdown headings that match the requested structure (# ## ###). **Bold** sparingly. No preamble, no 'here is the assignment', no commentary, no code fences. If a draft is present, keep what works, fill what is missing, and stay on the brief.",
+        ),
+      },
+      {
+        role: "user",
+        content: draft
+          ? `PAPER\n${paper}\n\nDRAFT ON THE PAGE\n${draft}\n\nComplete the work.`
+          : `PAPER\n${paper}\n\nThe page is empty. Write the full submission.`,
+      },
+    ],
+    onDelta,
+  });
 }
 
 export function hasKey(settings: Settings) {

@@ -6,8 +6,10 @@ import Underline from "@tiptap/extension-underline";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { FlowGhost } from "./extensions/flowGhost";
+import { SentenceSelect } from "./extensions/sentenceSelect";
 import { exportWord } from "./lib/docx";
 import {
+  completeFromBrief,
   DEFAULT_SETTINGS,
   defaultModelFor,
   enhanceSentence,
@@ -21,6 +23,13 @@ import { findLastTextRange, lastParagraph, lastWritingUnit, proseToHtml, replace
 import { PROVIDERS, type ProviderId } from "./lib/providers";
 import { isOllamaProvider, listOllamaModels } from "./lib/ollama";
 import {
+  briefWordCount,
+  extractPaper,
+  isPaperFile,
+  PAPER_ACCEPT,
+  titleFromPaperName,
+} from "./lib/scan";
+import {
   loadActiveId,
   loadDocs,
   loadSettings,
@@ -30,15 +39,16 @@ import {
   saveSettings,
   setProviderKey,
   titleFromHtml,
+  type Brief,
   type DocRecord,
 } from "./lib/storage";
 import type { FlowMode, TypeScale } from "./lib/types";
 
 const QUICK = [
-  { label: "Fix", prompt: "Fix spelling, grammar, missing words, and punctuation. Keep the voice. No extra ideas. No preamble." },
-  { label: "Enhance", prompt: "Fix errors, then make this one notch clearer and more specific. Same person. You may **bold** one punch phrase. Use a heading if this is a title. No preamble." },
-  { label: "Tighten", prompt: "Tighten this copy. Keep the voice. Cut fat. No preamble." },
-  { label: "Human", prompt: "Rewrite so it sounds like a person wrote it for a person. Kill marketing fog. Keep the meaning." },
+  { label: "Fix", prompt: "Fix spelling, grammar, missing words, and punctuation. Keep the voice. No extra ideas. No preamble. Keep every section." },
+  { label: "Enhance", prompt: "Fix errors, then make this one notch clearer and more specific. Same person. Keep the same structure and length. Do not drop sections. You may **bold** punch phrases. Use headings if they were headings. No preamble." },
+  { label: "Tighten", prompt: "Tighten this copy. Keep the voice and the structure. Cut fat. Do not drop sections. No preamble." },
+  { label: "Human", prompt: "Rewrite so it sounds like a person wrote it for a person. Kill marketing fog. Keep the meaning, structure, and length. Do not drop sections." },
 ];
 
 const SIZES = [
@@ -110,17 +120,49 @@ export default function App() {
   const [prompt, setPrompt] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [sel, setSel] = useState<{ x: number; y: number; text: string } | null>(null);
+  const [sel, setSel] = useState<{ x: number; y: number; text: string; below: boolean } | null>(null);
   const [liveModels, setLiveModels] = useState<string[]>([]);
+  const [scanOpen, setScanOpen] = useState(false);
+  const [scanName, setScanName] = useState("");
+  const [scanText, setScanText] = useState("");
+  const [scanBusy, setScanBusy] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const flowTimer = useRef<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const settingsRef = useRef(settings);
   const applyingRef = useRef(false);
   const genRef = useRef(0);
   const lastFixedRef = useRef("");
+  const briefRef = useRef("");
   const paperRef = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const onPauseRef = useRef<() => Promise<void>>(async () => undefined);
+  const placeSelbarRef = useRef<(ed: Editor) => void>(() => undefined);
   settingsRef.current = settings;
+
+  placeSelbarRef.current = (ed: Editor) => {
+    const { from, to } = ed.state.selection;
+    if (from === to || to - from < 2) {
+      setSel(null);
+      return;
+    }
+    const text = ed.state.doc.textBetween(from, to, "\n");
+    if (!text.trim()) {
+      setSel(null);
+      return;
+    }
+    try {
+      const start = ed.view.coordsAtPos(from);
+      const end = ed.view.coordsAtPos(Math.min(to, ed.state.doc.content.size));
+      const x = (Math.min(start.left, end.left) + Math.max(start.right, end.right)) / 2;
+      const top = Math.min(start.top, end.top);
+      const bottom = Math.max(start.bottom, end.bottom);
+      const below = top < 88;
+      setSel({ x, y: below ? bottom : top, text, below });
+    } catch {
+      setSel(null);
+    }
+  };
 
   const editor = useEditor({
     immediatelyRender: false,
@@ -132,6 +174,7 @@ export default function App() {
       Placeholder.configure({ placeholder: "Start typing. Flow fixes the line, then keeps writing with you." }),
       CharacterCount,
       FlowGhost,
+      SentenceSelect,
     ],
     content: "<p></p>",
     onUpdate: ({ editor: ed }) => {
@@ -142,15 +185,7 @@ export default function App() {
       flowTimer.current = window.setTimeout(() => void onPauseRef.current(), 850);
     },
     onSelectionUpdate: ({ editor: ed }) => {
-      const { from, to } = ed.state.selection;
-      if (from === to) {
-        setSel(null);
-        return;
-      }
-      const text = ed.state.doc.textBetween(from, to, " ");
-      const coords = ed.view.coordsAtPos(from);
-      const rect = ed.view.dom.getBoundingClientRect();
-      setSel({ x: coords.left - rect.left + 28, y: coords.top - rect.top + 18, text });
+      placeSelbarRef.current(ed);
     },
   });
 
@@ -174,6 +209,8 @@ export default function App() {
       const savedActive = await loadActiveId();
       const current = existing.find((d) => d.id === savedActive) ?? existing[0];
       setActiveId(current.id);
+      setScanName(current.brief?.name ?? "");
+      setScanText(current.brief?.text ?? "");
       editor?.commands.setContent(current.html, { emitUpdate: false });
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -195,6 +232,14 @@ export default function App() {
     ro.observe(el);
     return () => ro.disconnect();
   }, [settings.typeScale]);
+
+  useEffect(() => {
+    const el = paperRef.current;
+    if (!el || !editor) return;
+    const onScroll = () => placeSelbarRef.current(editor);
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [editor]);
 
   const persist = useCallback(
     async (nextDocs: DocRecord[], id = activeId) => {
@@ -218,6 +263,9 @@ export default function App() {
         : d,
     );
   }, [activeId, docs, editor]);
+
+  const activeDoc = docs.find((d) => d.id === activeId);
+  briefRef.current = activeDoc?.brief?.text ?? "";
 
   useEffect(() => {
     const t = window.setInterval(() => {
@@ -260,11 +308,11 @@ export default function App() {
     }
 
     if (s.flow === "off" || gen !== genRef.current) return;
-    await runFlow(editor.getText(), gen, ac);
+    await runFlow(editor.getText(), gen, ac, briefRef.current);
   }
   onPauseRef.current = onPause;
 
-  async function runFlow(text: string, gen: number, ac: AbortController) {
+  async function runFlow(text: string, gen: number, ac: AbortController, brief?: string) {
     const s = settingsRef.current;
     if (s.flow === "off" || !hasKey(s) || !editor) return;
     setError("");
@@ -275,7 +323,7 @@ export default function App() {
         if (gen !== genRef.current) return;
         acc += chunk;
         editor.commands.setFlowGhost(acc.replace(/\s+/g, " ").replace(/^[\s,.;:]+/, ""));
-      }, ac.signal);
+      }, ac.signal, brief);
       if (gen !== genRef.current || ac.signal.aborted) return;
       setStatus(acc.trim() ? "Tab to keep the line. Esc to dismiss." : "Flow is listening.");
     } catch (e) {
@@ -294,21 +342,51 @@ export default function App() {
       setError("Add a model key to write with you.");
       return;
     }
+    const { from, to } = editor.state.selection;
+    const selected = source ?? editor.state.doc.textBetween(from, to, "\n");
+    const hasRange = to > from;
+    const pageText = editor.getText().replace(/\s+/g, " ").trim();
+    const selectedNorm = selected.replace(/\s+/g, " ").trim();
+    const wholePage = Boolean(selectedNorm) && selectedNorm === pageText;
+    const backup = editor.getHTML();
     setBusy(true);
     setError("");
     setStatus("Writing…");
-    const selected = source ?? editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to, " ");
+    abortRef.current?.abort();
+    applyingRef.current = true;
+    editor.commands.clearFlowGhost();
     try {
-      const out = await transform(s, instruction, selected || editor.getText().slice(-2000));
+      const out = await transform(s, instruction, selected || editor.getText().slice(-2000), briefRef.current);
+      if (!out.trim()) {
+        setError("Nothing came back. Your page is unchanged.");
+        setStatus("Enhance missed. Try a smaller selection.");
+        return;
+      }
       const html = proseToHtml(out);
-      const chain = editor.chain().focus();
-      if (selected) chain.deleteSelection();
-      chain.insertContent(html).run();
+      if (!html || html === "<p></p>") {
+        setError("Nothing came back. Your page is unchanged.");
+        setStatus("Enhance missed. Try a smaller selection.");
+        return;
+      }
+      if (wholePage) {
+        editor.commands.setContent(html, { emitUpdate: false });
+      } else if (hasRange) {
+        const size = editor.state.doc.content.size;
+        const fromSafe = Math.max(1, Math.min(from, size));
+        const toSafe = Math.max(fromSafe, Math.min(to, size));
+        editor.chain().focus().insertContentAt({ from: fromSafe, to: toSafe }, html).run();
+      } else {
+        editor.chain().focus().insertContent(html).run();
+      }
       editor.commands.clearFlowGhost();
       setStatus("In the page.");
     } catch (e) {
+      applyingRef.current = true;
+      editor.commands.setContent(backup, { emitUpdate: false });
       setError(e instanceof Error ? e.message : String(e));
+      setStatus("Your page is unchanged.");
     } finally {
+      applyingRef.current = false;
       setBusy(false);
       setPalette(false);
       setSel(null);
@@ -357,6 +435,8 @@ export default function App() {
     void persist(next, id);
     setActiveId(id);
     lastFixedRef.current = "";
+    setScanName(doc.brief?.name ?? "");
+    setScanText(doc.brief?.text ?? "");
     editor.commands.setContent(doc.html, { emitUpdate: false });
   }
 
@@ -366,7 +446,126 @@ export default function App() {
     void persist([doc, ...nextDocs], doc.id);
     setActiveId(doc.id);
     lastFixedRef.current = "";
+    setScanName("");
+    setScanText("");
     editor?.commands.setContent("<p></p>", { emitUpdate: false });
+  }
+
+  function attachBrief(brief: Brief) {
+    const next = snapshot().map((d) =>
+      d.id === activeId
+        ? {
+            ...d,
+            brief,
+            title: d.title === "Untitled" ? titleFromPaperName(brief.name) : d.title,
+            updatedAt: Date.now(),
+          }
+        : d,
+    );
+    void persist(next);
+    setScanName(brief.name);
+    setScanText(brief.text);
+    briefRef.current = brief.text;
+  }
+
+  function clearBrief() {
+    const next = snapshot().map((d) => {
+      if (d.id !== activeId) return d;
+      return { id: d.id, title: d.title, html: d.html, updatedAt: Date.now() };
+    });
+    void persist(next);
+    setScanName("");
+    setScanText("");
+    briefRef.current = "";
+    setStatus("Brief cleared. Flow is just the page again.");
+  }
+
+  async function runComplete(text: string) {
+    if (!editor) return;
+    const s = settingsRef.current;
+    if (!hasKey(s)) {
+      setSettingsOpen(true);
+      setError("Add a model key to complete a paper.");
+      return;
+    }
+    setBusy(true);
+    setScanOpen(false);
+    setError("");
+    const gen = ++genRef.current;
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
+    applyingRef.current = true;
+    editor.commands.clearFlowGhost();
+    setStatus("Reading the paper. Completing onto the page…");
+    const existing = editor.getText().trim();
+    let acc = "";
+    let lastPaint = 0;
+    const paint = (force = false) => {
+      const now = Date.now();
+      if (!force && now - lastPaint < 90) return;
+      lastPaint = now;
+      editor.commands.setContent(proseToHtml(acc) || "<p></p>", { emitUpdate: false });
+    };
+    try {
+      await completeFromBrief(s, text, existing, (chunk) => {
+        if (gen !== genRef.current) return;
+        acc += chunk;
+        paint();
+      }, ac.signal);
+      if (gen !== genRef.current) return;
+      paint(true);
+      setStatus("On the page. Edit from here — Flow still has the brief.");
+    } catch (e) {
+      if (e instanceof Error && e.name === "AbortError") return;
+      setError(e instanceof Error ? e.message : String(e));
+      setStatus("Complete paused.");
+    } finally {
+      applyingRef.current = false;
+      setBusy(false);
+    }
+  }
+
+  async function ingestFile(file: File, complete: boolean) {
+    if (!isPaperFile(file)) {
+      setError("Scan wants a PDF, Word, or text paper.");
+      setScanOpen(true);
+      return;
+    }
+    setScanBusy(true);
+    setError("");
+    setStatus(`Reading ${file.name}…`);
+    try {
+      const extracted = await extractPaper(file);
+      if (!extracted.trim()) throw new Error("Couldn't read any text from that file.");
+      const brief: Brief = { name: file.name, text: extracted, scannedAt: Date.now() };
+      attachBrief(brief);
+      if (complete) await runComplete(extracted);
+      else {
+        setScanOpen(true);
+        setStatus(`Scanned ${briefWordCount(extracted).toLocaleString()} words. Complete when you're ready.`);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setScanOpen(true);
+    } finally {
+      setScanBusy(false);
+    }
+  }
+
+  async function ingestPasted(complete: boolean) {
+    const text = scanText.trim();
+    if (!text) {
+      setError("Paste the paper, or drop a file.");
+      return;
+    }
+    const brief: Brief = { name: scanName.trim() || "Pasted brief", text, scannedAt: Date.now() };
+    attachBrief(brief);
+    if (complete) await runComplete(text);
+    else {
+      setScanOpen(false);
+      setStatus(`Brief attached · ${briefWordCount(text).toLocaleString()} words. Flow has it.`);
+    }
   }
 
   async function onExport() {
@@ -434,6 +633,7 @@ export default function App() {
       if (e.key === "Escape") {
         setPalette(false);
         setSettingsOpen(false);
+        setScanOpen(false);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -491,6 +691,9 @@ export default function App() {
           <button className="ghost" onClick={() => setPalette(true)}>
             Prompt ⌘K
           </button>
+          <button className="ghost" onClick={() => setScanOpen(true)}>
+            Scan
+          </button>
           <button className="ghost" onClick={() => void onExport()}>
             Word
           </button>
@@ -505,7 +708,25 @@ export default function App() {
         </div>
       </header>
 
-      <div className="workspace">
+      <div
+        className={`workspace ${dragging ? "dragging" : ""}`}
+        onDragOver={(e) => {
+          if (![...e.dataTransfer.types].includes("Files")) return;
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={(e) => {
+          if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+          setDragging(false);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragging(false);
+          const file = e.dataTransfer.files[0];
+          if (file) void ingestFile(file, true);
+        }}
+      >
+        {dragging && <div className="drop-veil">Drop the paper. Scan, then complete.</div>}
         <aside className="rail">
           <h2>Pages</h2>
           <div className="doc-list">
@@ -519,11 +740,18 @@ export default function App() {
           <button className="rail-btn" onClick={createDoc}>
             + New page
           </button>
+          <button className="rail-btn" onClick={() => setScanOpen(true)}>
+            Scan a paper
+          </button>
         </aside>
 
         <main className="stage">
           {sel && (
-            <div className="selbar" style={{ left: sel.x, top: sel.y }}>
+            <div
+              className={`selbar ${sel.below ? "below" : ""}`}
+              style={{ left: sel.x, top: sel.y }}
+              onMouseDown={(e) => e.preventDefault()}
+            >
               {QUICK.map((q) => (
                 <button key={q.label} onClick={() => void runTransform(q.prompt, sel.text)}>
                   {q.label}
@@ -575,6 +803,31 @@ export default function App() {
           <button className="rail-btn" onClick={() => void enhanceNow()}>
             Enhance last paragraph
           </button>
+          <h2 style={{ marginTop: 28 }}>Scan</h2>
+          {activeDoc?.brief ? (
+            <>
+              <p className="kit" style={{ paddingLeft: 0 }}>
+                {activeDoc.brief.name}
+                <br />
+                {briefWordCount(activeDoc.brief.text).toLocaleString()} words on this page. Flow writes against it.
+              </p>
+              <button className="rail-btn" disabled={busy || scanBusy} onClick={() => void runComplete(activeDoc.brief!.text)}>
+                Complete this paper
+              </button>
+              <button className="rail-btn" onClick={clearBrief}>
+                Clear brief
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="kit" style={{ paddingLeft: 0 }}>
+                Drop a PDF, Word, or text brief. CopyWritePrime reads it, then writes the submission onto the page.
+              </p>
+              <button className="rail-btn" onClick={() => setScanOpen(true)}>
+                Scan a paper
+              </button>
+            </>
+          )}
           <h2 style={{ marginTop: 28 }}>Type size</h2>
           <div className="toggles" style={{ padding: 0 }}>
             {(["auto", "sm", "md", "lg"] as TypeScale[]).map((scale) => (
@@ -660,6 +913,74 @@ export default function App() {
               {isOllamaProvider(settings.provider) && (
                 <button onClick={() => void syncOllama(settings)}>Sync Ollama models</button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {scanOpen && (
+        <div className="modal-backdrop" onMouseDown={() => setScanOpen(false)}>
+          <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
+            <h3>Scan a paper</h3>
+            <p className="lead">
+              Drop a take-home, brief, RFP, or assignment. CopyWritePrime reads it, then completes it onto the page. PDF, Word, or paste.
+            </p>
+            <div
+              className="scan-drop"
+              onClick={() => fileRef.current?.click()}
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const file = e.dataTransfer.files[0];
+                if (file) void ingestFile(file, false);
+              }}
+            >
+              {scanBusy ? "Reading…" : scanName ? scanName : "Drop a file, or click to choose"}
+              {scanText.trim() ? (
+                <small>{briefWordCount(scanText).toLocaleString()} words scanned</small>
+              ) : (
+                <small>PDF · Word · .txt · .md</small>
+              )}
+            </div>
+            <input
+              ref={fileRef}
+              type="file"
+              accept={PAPER_ACCEPT}
+              hidden
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (file) void ingestFile(file, false);
+              }}
+            />
+            <div className="provider-row" style={{ gridTemplateColumns: "1fr" }}>
+              <textarea
+                className="scan-paste"
+                placeholder="Or paste the brief here — Notion, email, the whole assignment…"
+                value={scanText}
+                onChange={(e) => setScanText(e.target.value)}
+              />
+            </div>
+            <div className="provider-row">
+              <label>Name</label>
+              <input value={scanName} placeholder="Take-home" onChange={(e) => setScanName(e.target.value)} />
+            </div>
+            <div className="toggles">
+              <button
+                className="active"
+                disabled={busy || scanBusy || !scanText.trim()}
+                onClick={() => void ingestPasted(true)}
+              >
+                Complete this paper
+              </button>
+              <button disabled={!scanText.trim()} onClick={() => void ingestPasted(false)}>
+                Attach only
+              </button>
+              <button onClick={() => setScanOpen(false)}>Close</button>
             </div>
           </div>
         </div>

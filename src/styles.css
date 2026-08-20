@@ -127,6 +127,7 @@ button { cursor: pointer; }
   display: grid;
   grid-template-columns: 220px 1fr 260px;
   min-height: 0;
+  position: relative;
 }
 
 .rail, .guard {
@@ -162,7 +163,8 @@ button { cursor: pointer; }
   border-color: var(--line);
 }
 .doc-item small { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
-.rail-btn { color: var(--gold); margin-top: 8px; }
+.rail-btn:disabled { opacity: 0.45; cursor: default; }
+.toggles button:disabled { opacity: 0.45; cursor: default; }
 
 .stage {
   background: #0e0d0b;
@@ -193,6 +195,7 @@ button { cursor: pointer; }
   font-family: var(--serif);
   font-size: var(--body-size);
   line-height: 1.55;
+  user-select: text;
 }
 .tiptap h1 { font-size: calc(var(--body-size) * 2.15); line-height: 1.15; font-weight: 600; margin: 0 0 18px; }
 .tiptap h2 { font-size: calc(var(--body-size) * 1.35); margin: 32px 0 10px; font-weight: 600; }
@@ -239,16 +242,20 @@ button { cursor: pointer; }
 .status .err { color: var(--danger); }
 
 .selbar {
-  position: absolute;
-  transform: translate(-50%, -140%);
+  position: fixed;
+  transform: translate(-50%, calc(-100% - 8px));
   background: var(--ink-2);
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 4px;
   display: flex;
   gap: 2px;
-  z-index: 20;
+  z-index: 40;
   box-shadow: 0 10px 40px rgba(0,0,0,0.4);
+  pointer-events: auto;
+}
+.selbar.below {
+  transform: translate(-50%, 12px);
 }
 .selbar button {
   background: transparent;
@@ -337,7 +344,60 @@ button { cursor: pointer; }
   font-size: 13px;
 }
 .toggles { display: flex; gap: 8px; padding: 10px 18px 0; flex-wrap: wrap; }
+.toggles button {
+  background: var(--ink-3);
+  border: 1px solid var(--line);
+  color: #f3ece3;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+}
 .toggles button.active { border-color: var(--gold); color: var(--gold); }
 
 .kit { font-size: 12px; color: var(--muted); line-height: 1.45; padding-left: 16px; }
 .kit li { margin: 0 0 6px; }
+
+.workspace.dragging .stage {
+  outline: 1px dashed var(--gold);
+  outline-offset: -12px;
+}
+.drop-veil {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  background: rgba(18, 17, 14, 0.72);
+  color: var(--gold-2);
+  font-family: var(--serif);
+  font-size: 28px;
+  pointer-events: none;
+  letter-spacing: -0.02em;
+}
+.scan-drop {
+  margin: 4px 18px 10px;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  padding: 22px 16px;
+  text-align: center;
+  color: #e8e0d4;
+  font-size: 14px;
+  cursor: pointer;
+  background: var(--ink);
+}
+.scan-drop:hover { border-color: var(--gold); color: var(--gold); }
+.scan-drop small { display: block; margin-top: 6px; color: var(--muted); font-size: 12px; }
+.scan-paste {
+  width: 100%;
+  min-height: 140px;
+  resize: vertical;
+  background: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #f3ece3;
+  font-size: 13px;
+  font-family: var(--serif);
+  line-height: 1.45;
+  outline: none;
+}

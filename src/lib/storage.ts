@@ -2,11 +2,18 @@ import { Store } from "@tauri-apps/plugin-store";
 import { DEFAULT_SETTINGS, normalizeFlow, normalizeTypeScale, type Settings } from "./llm";
 import type { ProviderId } from "./providers";
 
+export interface Brief {
+  name: string;
+  text: string;
+  scannedAt: number;
+}
+
 export interface DocRecord {
   id: string;
   title: string;
   html: string;
   updatedAt: number;
+  brief?: Brief;
 }
 
 const SETTINGS_KEY = "settings";
