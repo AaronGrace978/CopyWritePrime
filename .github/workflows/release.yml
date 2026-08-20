@@ -55,7 +55,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "CopyWritePrime ${{ github.ref_name }}"
-          releaseBody: "Clear and archive pages. Gold marks on AI writing. Workshop reads the page that’s already there."
+          releaseBody: "Kill em dashes. Word export is Times New Roman 12, double-spaced."
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}

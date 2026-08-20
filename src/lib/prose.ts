@@ -1,4 +1,5 @@
 import type { Editor } from "@tiptap/react";
+import { killEmDashes } from "./dashes";
 
 export function splitSentences(text: string): { start: number; end: number }[] {
   const ranges: { start: number; end: number }[] = [];
@@ -145,6 +146,29 @@ export function markDocAsAi(editor: Editor) {
   const size = editor.state.doc.content.size;
   if (size <= 2) return;
   editor.chain().selectAll().setInkMark("ai").run();
+}
+
+export function stripEmDashesInEditor(editor: Editor, range?: { from: number; to: number }) {
+  const from = range?.from ?? 0;
+  const to = range?.to ?? editor.state.doc.content.size;
+  const tr = editor.state.tr;
+  const hits: { from: number; to: number; text: string }[] = [];
+  editor.state.doc.nodesBetween(from, to, (node, pos) => {
+    if (!node.isText || !node.text) return;
+    const start = Math.max(from, pos);
+    const end = Math.min(to, pos + node.nodeSize);
+    if (end <= start) return;
+    const localFrom = start - pos;
+    const localTo = end - pos;
+    const slice = node.text.slice(localFrom, localTo);
+    const next = killEmDashes(slice);
+    if (next !== slice) hits.push({ from: start, to: end, text: next });
+  });
+  for (const hit of hits.reverse()) {
+    tr.insertText(hit.text, hit.from, hit.to);
+  }
+  if (tr.docChanged) editor.view.dispatch(tr);
+  return tr.docChanged;
 }
 
 export function replaceLastOccurrence(editor: Editor, target: string, next: string, asHtml: boolean) {

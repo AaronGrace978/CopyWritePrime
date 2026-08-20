@@ -21,6 +21,7 @@ import {
   transform,
   type Settings,
 } from "./lib/llm";
+import { killEmDashes } from "./lib/dashes";
 import {
   findLastTextRange,
   insertAiContent,
@@ -30,6 +31,7 @@ import {
   pagePlain,
   proseToHtml,
   replaceLastOccurrence,
+  stripEmDashesInEditor,
 } from "./lib/prose";
 import { PROVIDERS, type ProviderId } from "./lib/providers";
 import { isOllamaProvider, listOllamaModels } from "./lib/ollama";
@@ -58,9 +60,9 @@ import type { FlowMode, TypeScale } from "./lib/types";
 
 const QUICK = [
   { label: "Fix", prompt: "Fix spelling, grammar, missing words, and punctuation. Keep the voice. No extra ideas. No preamble. Keep every section." },
-  { label: "Enhance", prompt: "Fix errors, then make this one notch clearer and more specific. Same person. Keep the same structure and length. Do not drop sections. You may **bold** punch phrases. Use headings if they were headings. No preamble." },
+  { label: "Enhance", prompt: "Fix errors, then make this one notch clearer and more specific. Same person. Keep the same structure and length. Do not drop sections. You may **bold** punch phrases. Use headings if they were headings. No em dashes. No preamble." },
   { label: "Tighten", prompt: "Tighten this copy. Keep the voice and the structure. Cut fat. Do not drop sections. No preamble." },
-  { label: "Human", prompt: "Rewrite so it sounds like a person wrote it for a person. Kill marketing fog. Keep the meaning, structure, and length. Do not drop sections." },
+  { label: "Human", prompt: "Rewrite so it sounds like a person wrote it for a person. Kill marketing fog. Kill every em dash. Keep the meaning, structure, and length. Do not drop sections." },
 ];
 
 const SIZES = [
@@ -360,7 +362,7 @@ export default function App() {
       await flowContinue(s, text, (chunk) => {
         if (gen !== genRef.current) return;
         acc += chunk;
-        editor.commands.setFlowGhost(acc.replace(/\s+/g, " ").replace(/^[\s,.;:]+/, ""));
+        editor.commands.setFlowGhost(killEmDashes(acc).replace(/\s+/g, " ").replace(/^[\s,.;:]+/, ""));
       }, ac.signal, brief);
       if (gen !== genRef.current || ac.signal.aborted) return;
       setStatus(acc.trim() ? "Tab to keep the line. Esc to dismiss." : "Flow is listening.");
@@ -619,12 +621,12 @@ export default function App() {
         (chunk) => {
           if (gen !== genRef.current) return;
           acc += chunk;
-          setLiveWorkshop([...prior, userTurn, { role: "assistant", content: acc }]);
+          setLiveWorkshop([...prior, userTurn, { role: "assistant", content: killEmDashes(acc) }]);
         },
         ac.signal,
       );
       if (gen !== genRef.current) return;
-      const done = [...prior, userTurn, { role: "assistant" as const, content: acc.trim() || "Nothing came back." }];
+      const done = [...prior, userTurn, { role: "assistant" as const, content: killEmDashes(acc).trim() || "Nothing came back." }];
       setWorkshop(done);
       setLiveWorkshop(null);
       setStatus("Workshop answered. The page didn't move.");
@@ -638,9 +640,18 @@ export default function App() {
     }
   }
 
+  function killDashesNow() {
+    if (!editor) return;
+    const { from, to } = editor.state.selection;
+    const scoped = to > from && to - from > 1;
+    const changed = stripEmDashesInEditor(editor, scoped ? { from, to } : undefined);
+    setSel(null);
+    setStatus(changed ? "Em dashes are gone." : "No em dashes on the page.");
+  }
+
   function insertWorkshop(text: string) {
     if (!editor || !text.trim()) return;
-    insertAiContent(editor, proseToHtml(text));
+    insertAiContent(editor, proseToHtml(killEmDashes(text)));
     setStatus("Dropped onto the page.");
   }
 
@@ -699,7 +710,7 @@ export default function App() {
       const now = Date.now();
       if (!force && now - lastPaint < 90) return;
       lastPaint = now;
-      editor.commands.setContent(proseToHtml(acc) || "<p></p>", { emitUpdate: false });
+      editor.commands.setContent(proseToHtml(killEmDashes(acc)) || "<p></p>", { emitUpdate: false });
     };
     try {
       await completeFromBrief(s, text, existing, (chunk) => {
@@ -710,7 +721,7 @@ export default function App() {
       if (gen !== genRef.current) return;
       paint(true);
       markDocAsAi(editor);
-      setStatus("On the page. Gold is AI. Edit from here — Flow still has the brief.");
+      setStatus("On the page. Gold is AI. Edit from here. Flow still has the brief.");
     } catch (e) {
       if (e instanceof Error && e.name === "AbortError") return;
       setError(e instanceof Error ? e.message : String(e));
@@ -768,7 +779,7 @@ export default function App() {
     const title = docs.find((d) => d.id === activeId)?.title ?? "CopyWritePrime";
     try {
       await exportWord(title, editor.getHTML());
-      setStatus("Word file saved.");
+      setStatus("Word saved. Times New Roman 12, double-spaced. Em dashes stripped.");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -1013,6 +1024,7 @@ export default function App() {
                   {q.label}
                 </button>
               ))}
+              <button onClick={killDashesNow}>Em dash</button>
               <button
                 onClick={() => {
                   openWorkshop();
@@ -1057,7 +1069,7 @@ export default function App() {
               </p>
               <details className="workshop-page" open>
                 <summary>On the page · {words} words</summary>
-                <pre>{pagePlain(editor) || "(empty — write on the paper, then ask.)"}</pre>
+                <pre>{pagePlain(editor) || "(empty. Write on the paper, then ask.)"}</pre>
               </details>
               <div className="workshop-log">
                 {((liveWorkshop ?? activeDoc?.workshop) ?? []).length === 0 && (
@@ -1137,8 +1149,11 @@ export default function App() {
           >
             Clear AI marks
           </button>
+          <button className="rail-btn" onClick={killDashesNow}>
+            Kill em dashes
+          </button>
           <p className="kit" style={{ paddingLeft: 0, marginTop: 10 }}>
-            Gold on the page is what the model wrote. HL is your highlighter. AI on the type bar hides the gold.
+            Gold on the page is what the model wrote. HL is your highlighter. AI on the type bar hides the gold. Em dash is the AI tell. Kill it.
           </p>
           <h2 style={{ marginTop: 28 }}>Scan</h2>
           {activeDoc?.brief ? (
@@ -1204,6 +1219,7 @@ export default function App() {
                   {q.label}
                 </button>
               ))}
+              <button onClick={killDashesNow}>Em dash</button>
             </div>
           </div>
         </div>
@@ -1299,7 +1315,7 @@ export default function App() {
             <div className="provider-row" style={{ gridTemplateColumns: "1fr" }}>
               <textarea
                 className="scan-paste"
-                placeholder="Or paste the brief here — Notion, email, the whole assignment…"
+                placeholder="Or paste the brief here. Notion, email, the whole assignment…"
                 value={scanText}
                 onChange={(e) => setScanText(e.target.value)}
               />

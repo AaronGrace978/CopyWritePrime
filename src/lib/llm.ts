@@ -1,3 +1,4 @@
+import { killEmDashes } from "./dashes";
 import { PROVIDERS, providerById, type ProviderId } from "./providers";
 import { httpFetch } from "./http";
 import { isOllamaProvider, streamOllamaChat } from "./ollama";
@@ -7,9 +8,12 @@ export type { ChatMessage, Settings };
 export { DEFAULT_SETTINGS, normalizeFlow, normalizeTypeScale };
 
 function writerSystem(extra?: string) {
+  const ban =
+    " Never use an em dash, a horizontal bar, or -- as a pause. Write a period, a comma, a colon, or a new sentence. Number ranges like 10–15 may keep an en dash.";
   return (
-    extra ??
-    "You are CopyWritePrime, a writing instrument sitting in the sentence with a fast, messy typer. Match their voice. Be concrete. Never announce that you are an AI. Return only the requested prose."
+    (extra ??
+      "You are CopyWritePrime, a writing instrument sitting in the sentence with a fast, messy typer. Match their voice. Be concrete. Never announce that you are an AI. Return only the requested prose.") +
+    ban
   );
 }
 
@@ -218,11 +222,13 @@ async function errorText(res: Response) {
 }
 
 function cleanModelText(out: string) {
-  return out
-    .trim()
-    .replace(/^["']|["']$/g, "")
-    .replace(/^```(?:\w+)?\n?|\n?```$/g, "")
-    .trim();
+  return killEmDashes(
+    out
+      .trim()
+      .replace(/^["']|["']$/g, "")
+      .replace(/^```(?:\w+)?\n?|\n?```$/g, "")
+      .trim(),
+  );
 }
 
 function briefNote(brief?: string) {
@@ -324,13 +330,13 @@ export async function transform(settings: Settings, instruction: string, source:
       {
         role: "system",
         content: writerSystem(
-          "Rewrite or generate copy per the instruction. Return only the copy. You may use markdown: # ## ### headings, **bold**, *italic*. No commentary. No code fences. If the source is long, keep every section. Do not collapse it to one paragraph." +
+          "Rewrite or generate copy per the instruction. Return only the copy. You may use markdown: # ## ### headings, **bold**, *italic*. No commentary. No code fences. If the source is long, keep every section. Do not collapse it to one paragraph. Never use an em dash." +
             briefNote(brief),
         ),
       },
       {
         role: "user",
-        content: `Instruction:\n${instruction}\n\nSource:\n${source || "(empty — write from the instruction)"}`,
+        content: `Instruction:\n${instruction}\n\nSource:\n${source || "(empty. Write from the instruction)"}`,
       },
     ],
     onDelta: (c) => {
@@ -358,7 +364,7 @@ export async function completeFromBrief(
       {
         role: "system",
         content: writerSystem(
-          "You complete take-homes, briefs, RFPs, and assignments. Read the paper. Infer the required parts, word limits, tone, and any compliance kit. Write the finished submission a strong human would turn in. Honor every constraint. Make guardrails invisible in the copy — do not list banned phrases. Use markdown headings that match the requested structure (# ## ###). **Bold** sparingly. No preamble, no 'here is the assignment', no commentary, no code fences. If a draft is present, keep what works, fill what is missing, and stay on the brief.",
+          "You complete take-homes, briefs, RFPs, and assignments. Read the paper. Infer the required parts, word limits, tone, and any compliance kit. Write the finished submission a strong human would turn in. Honor every constraint. Make guardrails invisible in the copy. Do not list banned phrases. Use markdown headings that match the requested structure (# ## ###). **Bold** sparingly. No preamble, no 'here is the assignment', no commentary, no code fences. Never use an em dash. If a draft is present, keep what works, fill what is missing, and stay on the brief.",
         ),
       },
       {
@@ -394,7 +400,7 @@ export async function workshopChat(
       {
         role: "system",
         content: writerSystem(
-          "You are Workshop, a copy chief sitting next to the writer. You can see the PAGE — that is what is already written. Read it before you answer. Quote from it. Do not invent lines that are not on the page. Be direct. Prefer numerals, $ and % in ads, prices, and stats — never spell those out. If a required stat was paraphrased, say so and give the exact line. Do not rewrite the whole page unless they ask. If you offer a line of copy, put it on its own paragraph. No cheerleading. No preamble." +
+          "You are Workshop, a copy chief sitting next to the writer. You can see the PAGE. That is what is already written. Read it before you answer. Quote from it. Do not invent lines that are not on the page. Be direct. Prefer numerals, $ and % in ads, prices, and stats. Never spell those out. Never use an em dash. If a required stat was paraphrased, say so and give the exact line. Do not rewrite the whole page unless they ask. If you offer a line of copy, put it on its own paragraph. No cheerleading. No preamble." +
             briefNote(opts.brief) +
             `\n\nPAGE (already written)\n${page}`,
         ),
@@ -402,7 +408,7 @@ export async function workshopChat(
       ...opts.history.slice(-10),
       {
         role: "user",
-        content: `The page is already in your context. Use it.\n\nSELECTION\n${opts.selection.trim() || "(none — talk about the whole page)"}\n\nQUESTION\n${opts.question.trim()}`,
+        content: `The page is already in your context. Use it.\n\nSELECTION\n${opts.selection.trim() || "(none. Talk about the whole page.)"}\n\nQUESTION\n${opts.question.trim()}`,
       },
     ],
     onDelta,

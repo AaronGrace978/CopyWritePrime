@@ -1,160 +1,264 @@
 import {
   AlignmentType,
   Document,
+  Header,
   HeadingLevel,
+  LevelFormat,
   Packer,
+  PageNumber,
   Paragraph,
   TextRun,
 } from "docx";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
+import { killEmDashes } from "./dashes";
+
+const FONT = "Times New Roman";
+const SIZE = 24;
+const DOUBLE = { line: 480, lineRule: "auto" as const, before: 0, after: 0 };
+const INCH = 1440;
 
 function inTauri() {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-function textRuns(text: string, opts?: { bold?: boolean; italics?: boolean; underline?: boolean; size?: number }) {
+function run(text: string, opts?: { bold?: boolean; italics?: boolean; underline?: boolean }) {
+  const value = killEmDashes(text);
+  if (!value) return null;
   return new TextRun({
-    text,
+    text: value,
+    font: FONT,
+    size: SIZE,
     bold: opts?.bold,
     italics: opts?.italics,
     underline: opts?.underline ? { type: "single" } : undefined,
-    size: opts?.size ?? 24,
-    font: "Calibri",
   });
 }
 
-export async function htmlToDocxBuffer(title: string, html: string): Promise<Uint8Array> {
-  const host = document.createElement("div");
-  host.innerHTML = html;
-  const children: Paragraph[] = [
-    new Paragraph({
-      heading: HeadingLevel.TITLE,
-      spacing: { after: 240 },
-      children: [textRuns(title, { bold: true, size: 48 })],
-    }),
-  ];
-
-  const blocks = Array.from(host.childNodes);
-  const walk = (el: Element) => {
-    const tag = el.tagName.toLowerCase();
-    const text = el.textContent ?? "";
-    if (!text.trim() && tag !== "hr") return;
-    if (tag === "h1") {
-      children.push(
-        new Paragraph({
-          heading: HeadingLevel.HEADING_1,
-          spacing: { before: 280, after: 120 },
-          children: [textRuns(text, { bold: true, size: 36 })],
-        }),
-      );
-    } else if (tag === "h2") {
-      children.push(
-        new Paragraph({
-          heading: HeadingLevel.HEADING_2,
-          spacing: { before: 240, after: 80 },
-          children: [textRuns(text, { bold: true, size: 30 })],
-        }),
-      );
-    } else if (tag === "h3") {
-      children.push(
-        new Paragraph({
-          heading: HeadingLevel.HEADING_3,
-          spacing: { before: 180, after: 60 },
-          children: [textRuns(text, { bold: true, size: 26 })],
-        }),
-      );
-    } else if (tag === "blockquote") {
-      children.push(
-        new Paragraph({
-          spacing: { before: 80, after: 80 },
-          indent: { left: 360 },
-          children: [textRuns(text, { italics: true })],
-        }),
-      );
-    } else if (tag === "li") {
-      children.push(
-        new Paragraph({
-          bullet: { level: 0 },
-          spacing: { after: 60 },
-          children: [textRuns(text)],
-        }),
-      );
-    } else if (tag === "ul" || tag === "ol") {
-      Array.from(el.children).forEach((c) => walk(c));
-    } else if (tag === "p" || tag === "div") {
-      children.push(
-        new Paragraph({
-          spacing: { after: 160 },
-          alignment: AlignmentType.LEFT,
-          children: inlineRuns(el),
-        }),
-      );
-    } else if (tag === "hr") {
-      children.push(new Paragraph({ spacing: { before: 120, after: 120 }, children: [textRuns("")] }));
-    } else {
-      Array.from(el.childNodes).forEach((n) => {
-        if (n.nodeType === Node.ELEMENT_NODE) walk(n as Element);
-      });
-    }
-  };
-
-  if (blocks.length === 0) {
-    children.push(new Paragraph({ children: [textRuns(host.textContent ?? "")] }));
-  } else {
-    blocks.forEach((n) => {
-      if (n.nodeType === Node.ELEMENT_NODE) walk(n as Element);
-      else if (n.textContent?.trim()) {
-        children.push(new Paragraph({ children: [textRuns(n.textContent.trim())] }));
-      }
-    });
-  }
-
-  const doc = new Document({
-    sections: [{ properties: {}, children }],
+function pagePara(
+  children: TextRun[],
+  extra?: {
+    alignment?: (typeof AlignmentType)[keyof typeof AlignmentType];
+    heading?: (typeof HeadingLevel)[keyof typeof HeadingLevel];
+    indent?: { left?: number; hanging?: number };
+    numbering?: { reference: string; level: number };
+  },
+) {
+  return new Paragraph({
+    spacing: DOUBLE,
+    alignment: extra?.alignment,
+    heading: extra?.heading,
+    indent: extra?.indent,
+    numbering: extra?.numbering,
+    children: children.length ? children : [new TextRun({ text: "", font: FONT, size: SIZE })],
   });
-  const blob = await Packer.toBlob(doc);
-  return new Uint8Array(await blob.arrayBuffer());
 }
 
-function inlineRuns(el: Element) {
+function inlineRuns(el: Element, base?: { bold?: boolean; italics?: boolean; underline?: boolean }) {
   const runs: TextRun[] = [];
-  const visit = (node: Node, bold = false, italics = false, underline = false, highlight?: string) => {
+  const visit = (node: Node, bold = false, italics = false, underline = false) => {
     if (node.nodeType === Node.TEXT_NODE) {
-      const t = node.textContent ?? "";
-      if (t) {
-        runs.push(
-          new TextRun({
-            text: t,
-            bold,
-            italics,
-            underline: underline ? { type: "single" } : undefined,
-            highlight: highlight as "yellow" | undefined,
-            size: 24,
-            font: "Calibri",
-          }),
-        );
-      }
+      const piece = run(node.textContent ?? "", { bold, italics, underline });
+      if (piece) runs.push(piece);
       return;
     }
     if (node.nodeType !== Node.ELEMENT_NODE) return;
     const e = node as Element;
     const tag = e.tagName.toLowerCase();
+    if (tag === "br") {
+      runs.push(new TextRun({ break: 1, font: FONT, size: SIZE }));
+      return;
+    }
     const nextBold = bold || tag === "strong" || tag === "b";
     const nextItalics = italics || tag === "em" || tag === "i";
     const nextUnderline = underline || tag === "u";
-    const kind = e.getAttribute("data-kind");
-    const nextHighlight = tag === "mark" && kind === "user" ? "yellow" : highlight;
-    e.childNodes.forEach((c) => visit(c, nextBold, nextItalics, nextUnderline, nextHighlight));
+    e.childNodes.forEach((c) => visit(c, nextBold, nextItalics, nextUnderline));
   };
-  el.childNodes.forEach((c) => visit(c));
-  if (runs.length === 0) runs.push(textRuns(el.textContent ?? ""));
+  el.childNodes.forEach((c) => visit(c, base?.bold ?? false, base?.italics ?? false, base?.underline ?? false));
+  if (runs.length === 0) {
+    const piece = run(el.textContent ?? "", base);
+    if (piece) runs.push(piece);
+  }
   return runs;
+}
+
+function runningHead(title: string) {
+  const clean = killEmDashes(title).replace(/\s+/g, " ").trim();
+  const named = clean.match(/^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/);
+  if (named) {
+    const parts = named[1].split(/\s+/);
+    return parts[parts.length - 1];
+  }
+  return clean.slice(0, 28) || "CopyWritePrime";
+}
+
+function scrubDashes(node: Node) {
+  if (node.nodeType === Node.TEXT_NODE && node.textContent) {
+    node.textContent = killEmDashes(node.textContent);
+    return;
+  }
+  node.childNodes.forEach(scrubDashes);
+}
+
+export async function htmlToDocxBuffer(title: string, html: string): Promise<Uint8Array> {
+  const host = document.createElement("div");
+  host.innerHTML = html;
+  scrubDashes(host);
+
+  const children: Paragraph[] = [];
+  const first = host.querySelector("h1");
+  const titleText = killEmDashes(title).trim();
+  const pageHasTitle = Boolean(first?.textContent?.trim());
+  if (titleText && !pageHasTitle) {
+    children.push(
+      pagePara([run(titleText, { bold: false })!].filter(Boolean) as TextRun[], {
+        alignment: AlignmentType.CENTER,
+        heading: HeadingLevel.TITLE,
+      }),
+    );
+  }
+
+  const walk = (el: Element, list?: "ul" | "ol") => {
+    const tag = el.tagName.toLowerCase();
+    const text = (el.textContent ?? "").trim();
+    if (!text && tag !== "br" && tag !== "hr") {
+      if (tag === "ul" || tag === "ol") Array.from(el.children).forEach((c) => walk(c, tag));
+      return;
+    }
+
+    if (tag === "h1") {
+      children.push(
+        pagePara(inlineRuns(el), {
+          alignment: AlignmentType.CENTER,
+          heading: HeadingLevel.HEADING_1,
+        }),
+      );
+    } else if (tag === "h2") {
+      children.push(pagePara(inlineRuns(el, { bold: true }), { heading: HeadingLevel.HEADING_2 }));
+    } else if (tag === "h3") {
+      children.push(pagePara(inlineRuns(el, { italics: true }), { heading: HeadingLevel.HEADING_3 }));
+    } else if (tag === "blockquote") {
+      children.push(
+        pagePara(inlineRuns(el, { italics: true }), {
+          indent: { left: INCH / 2 },
+        }),
+      );
+    } else if (tag === "li") {
+      children.push(
+        pagePara(inlineRuns(el), {
+          numbering:
+            list === "ol"
+              ? { reference: "mla-numbers", level: 0 }
+              : { reference: "mla-bullets", level: 0 },
+        }),
+      );
+    } else if (tag === "ul" || tag === "ol") {
+      Array.from(el.children).forEach((c) => walk(c, tag));
+    } else if (tag === "p" || tag === "div") {
+      const nested = Array.from(el.children).filter((c) =>
+        /^(H1|H2|H3|UL|OL|BLOCKQUOTE|P|DIV)$/.test(c.tagName),
+      );
+      if (nested.length && !el.querySelector("br")) {
+        nested.forEach((c) => walk(c));
+        return;
+      }
+      children.push(pagePara(inlineRuns(el)));
+    } else if (tag === "hr") {
+      children.push(pagePara([]));
+    } else {
+      Array.from(el.childNodes).forEach((n) => {
+        if (n.nodeType === Node.ELEMENT_NODE) walk(n as Element, list);
+      });
+    }
+  };
+
+  const blocks = Array.from(host.childNodes);
+  if (blocks.length === 0) {
+    const piece = run(host.textContent ?? "");
+    children.push(pagePara(piece ? [piece] : []));
+  } else {
+    blocks.forEach((n) => {
+      if (n.nodeType === Node.ELEMENT_NODE) walk(n as Element);
+      else if (n.textContent?.trim()) {
+        const piece = run(n.textContent);
+        if (piece) children.push(pagePara([piece]));
+      }
+    });
+  }
+
+  const doc = new Document({
+    title: titleText,
+    styles: {
+      default: {
+        document: {
+          run: { font: FONT, size: SIZE },
+          paragraph: { spacing: DOUBLE },
+        },
+      },
+    },
+    numbering: {
+      config: [
+        {
+          reference: "mla-numbers",
+          levels: [
+            {
+              level: 0,
+              format: LevelFormat.DECIMAL,
+              text: "%1.",
+              alignment: AlignmentType.LEFT,
+              style: { paragraph: { indent: { left: 720, hanging: 360 } } },
+            },
+          ],
+        },
+        {
+          reference: "mla-bullets",
+          levels: [
+            {
+              level: 0,
+              format: LevelFormat.BULLET,
+              text: "•",
+              alignment: AlignmentType.LEFT,
+              style: { paragraph: { indent: { left: 720, hanging: 360 } } },
+            },
+          ],
+        },
+      ],
+    },
+    sections: [
+      {
+        properties: {
+          page: {
+            margin: { top: INCH, right: INCH, bottom: INCH, left: INCH },
+          },
+        },
+        headers: {
+          default: new Header({
+            children: [
+              new Paragraph({
+                alignment: AlignmentType.RIGHT,
+                spacing: DOUBLE,
+                children: [
+                  new TextRun({
+                    font: FONT,
+                    size: SIZE,
+                    children: [`${runningHead(titleText)} `, PageNumber.CURRENT],
+                  }),
+                ],
+              }),
+            ],
+          }),
+        },
+        children,
+      },
+    ],
+  });
+  const blob = await Packer.toBlob(doc);
+  return new Uint8Array(await blob.arrayBuffer());
 }
 
 export async function exportWord(title: string, html: string) {
   const bytes = await htmlToDocxBuffer(title, html);
-  const safe = title.replace(/[\\/:*?"<>|]+/g, " ").trim() || "CopyWritePrime";
+  const safe = killEmDashes(title).replace(/[\\/:*?"<>|]+/g, " ").trim() || "CopyWritePrime";
   if (inTauri()) {
     const path = await save({
       defaultPath: `${safe}.docx`,

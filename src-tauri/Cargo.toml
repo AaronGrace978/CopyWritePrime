@@ -1,6 +1,6 @@
 [package]
 name = "copywriteprime"
-version = "0.5.0"
+version = "0.5.1"
 description = "CopyWritePrime — an AI writing studio that stays in the sentence with you."
 authors = ["Aaron Grace"]
 edition = "2021"
