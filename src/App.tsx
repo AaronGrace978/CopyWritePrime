@@ -6,6 +6,7 @@ import Underline from "@tiptap/extension-underline";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { FlowGhost } from "./extensions/flowGhost";
+import { InkMark } from "./extensions/inkMark";
 import { SentenceSelect } from "./extensions/sentenceSelect";
 import { exportWord } from "./lib/docx";
 import {
@@ -20,7 +21,16 @@ import {
   transform,
   type Settings,
 } from "./lib/llm";
-import { findLastTextRange, lastParagraph, lastWritingUnit, proseToHtml, replaceLastOccurrence } from "./lib/prose";
+import {
+  findLastTextRange,
+  insertAiContent,
+  lastParagraph,
+  lastWritingUnit,
+  markDocAsAi,
+  pagePlain,
+  proseToHtml,
+  replaceLastOccurrence,
+} from "./lib/prose";
 import { PROVIDERS, type ProviderId } from "./lib/providers";
 import { isOllamaProvider, listOllamaModels } from "./lib/ollama";
 import {
@@ -71,7 +81,15 @@ async function win() {
   return getCurrentWindow();
 }
 
-function TypeBar({ editor }: { editor: Editor | null }) {
+function TypeBar({
+  editor,
+  showAiMarks,
+  onToggleAiMarks,
+}: {
+  editor: Editor | null;
+  showAiMarks: boolean;
+  onToggleAiMarks: () => void;
+}) {
   if (!editor) return null;
   const size = (editor.getAttributes("textStyle").fontSize as string | undefined) ?? "";
   return (
@@ -84,6 +102,12 @@ function TypeBar({ editor }: { editor: Editor | null }) {
       </button>
       <button className={editor.isActive("underline") ? "active" : ""} onClick={() => editor.chain().focus().toggleUnderline().run()}>
         U
+      </button>
+      <button className={editor.isActive("inkMark", { kind: "user" }) ? "active" : ""} onClick={() => editor.chain().focus().toggleUserHighlight().run()}>
+        HL
+      </button>
+      <button className={showAiMarks ? "active" : ""} title="Show AI writing in gold" onClick={onToggleAiMarks}>
+        AI
       </button>
       <span className="type-gap" />
       <button className={editor.isActive("heading", { level: 1 }) ? "active" : ""} onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}>
@@ -129,6 +153,7 @@ export default function App() {
   const [scanText, setScanText] = useState("");
   const [scanBusy, setScanBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [showArchive, setShowArchive] = useState(false);
   const [railTab, setRailTab] = useState<"flow" | "workshop">("flow");
   const [workshopInput, setWorkshopInput] = useState("");
   const [workshopBusy, setWorkshopBusy] = useState(false);
@@ -182,6 +207,7 @@ export default function App() {
       Placeholder.configure({ placeholder: "Start typing. Flow fixes the line, then keeps writing with you." }),
       CharacterCount,
       FlowGhost,
+      InkMark,
       SentenceSelect,
     ],
     content: "<p></p>",
@@ -382,13 +408,14 @@ export default function App() {
       }
       if (wholePage) {
         editor.commands.setContent(html, { emitUpdate: false });
+        markDocAsAi(editor);
       } else if (hasRange) {
         const size = editor.state.doc.content.size;
         const fromSafe = Math.max(1, Math.min(from, size));
         const toSafe = Math.max(fromSafe, Math.min(to, size));
-        editor.chain().focus().insertContentAt({ from: fromSafe, to: toSafe }, html).run();
+        insertAiContent(editor, html, { from: fromSafe, to: toSafe });
       } else {
-        editor.chain().focus().insertContent(html).run();
+        insertAiContent(editor, html);
       }
       editor.commands.clearFlowGhost();
       setStatus("In the page.");
@@ -461,7 +488,89 @@ export default function App() {
     lastFixedRef.current = "";
     setScanName("");
     setScanText("");
+    setLiveWorkshop(null);
     editor?.commands.setContent("<p></p>", { emitUpdate: false });
+  }
+
+  function showPage(doc: DocRecord) {
+    setActiveId(doc.id);
+    lastFixedRef.current = "";
+    setScanName(doc.brief?.name ?? "");
+    setScanText(doc.brief?.text ?? "");
+    setLiveWorkshop(null);
+    briefRef.current = doc.brief?.text ?? "";
+    editor?.commands.setContent(doc.html || "<p></p>", { emitUpdate: false });
+  }
+
+  function clearPage() {
+    if (!editor) return;
+    lastFixedRef.current = "";
+    setScanName("");
+    setScanText("");
+    setLiveWorkshop(null);
+    briefRef.current = "";
+    editor.commands.setContent("<p></p>", { emitUpdate: false });
+    const next = snapshot().map((d) =>
+      d.id === activeId
+        ? { ...d, title: "Untitled", html: "<p></p>", updatedAt: Date.now(), workshop: undefined }
+        : d,
+    );
+    void persist(next);
+    setStatus("Page cleared.");
+  }
+
+  function archiveDoc(id: string) {
+    const stamped = snapshot().map((d) => (d.id === id ? { ...d, archivedAt: Date.now(), updatedAt: Date.now() } : d));
+    const live = stamped.filter((d) => !d.archivedAt);
+    if (id === activeId) {
+      const fallback = live[0] ?? { id: newId(), title: "Untitled", html: "<p></p>", updatedAt: Date.now() };
+      const list = live[0] ? stamped : [fallback, ...stamped];
+      void persist(list, fallback.id);
+      showPage(fallback);
+    } else {
+      void persist(stamped);
+    }
+    setStatus("Archived.");
+  }
+
+  function clearAndArchive() {
+    if (!editor) return;
+    const stamped = snapshot().map((d) =>
+      d.id === activeId ? { ...d, archivedAt: Date.now(), updatedAt: Date.now() } : d,
+    );
+    const fresh: DocRecord = { id: newId(), title: "Untitled", html: "<p></p>", updatedAt: Date.now() };
+    void persist([fresh, ...stamped], fresh.id);
+    showPage(fresh);
+    setStatus("Archived. Fresh page.");
+  }
+
+  function restoreDoc(id: string) {
+    const next = snapshot().map((d) => {
+      if (d.id !== id) return d;
+      const { archivedAt: _gone, ...rest } = d;
+      return { ...rest, updatedAt: Date.now() };
+    });
+    const restored = next.find((d) => d.id === id);
+    void persist(next, id);
+    if (restored) showPage(restored);
+    setStatus("Restored.");
+  }
+
+  function deleteDoc(id: string) {
+    const stamped = snapshot();
+    const remaining = stamped.filter((d) => d.id !== id);
+    if (remaining.length === 0) {
+      const fresh: DocRecord = { id: newId(), title: "Untitled", html: "<p></p>", updatedAt: Date.now() };
+      void persist([fresh], fresh.id);
+      showPage(fresh);
+    } else if (id === activeId) {
+      const fallback = remaining.find((d) => !d.archivedAt) ?? remaining[0];
+      void persist(remaining, fallback.id);
+      showPage(fallback);
+    } else {
+      void persist(remaining);
+    }
+    setStatus("Deleted.");
   }
 
   function setWorkshop(turns: WorkshopTurn[]) {
@@ -501,7 +610,7 @@ export default function App() {
       await workshopChat(
         s,
         {
-          page: editor.getText(),
+          page: pagePlain(editor),
           selection: sel?.text ?? "",
           brief: briefRef.current,
           history: prior,
@@ -531,7 +640,7 @@ export default function App() {
 
   function insertWorkshop(text: string) {
     if (!editor || !text.trim()) return;
-    editor.chain().focus().insertContent(proseToHtml(text)).run();
+    insertAiContent(editor, proseToHtml(text));
     setStatus("Dropped onto the page.");
   }
 
@@ -555,7 +664,8 @@ export default function App() {
   function clearBrief() {
     const next = snapshot().map((d) => {
       if (d.id !== activeId) return d;
-      return { id: d.id, title: d.title, html: d.html, updatedAt: Date.now() };
+      const { brief: _gone, ...rest } = d;
+      return { ...rest, updatedAt: Date.now() };
     });
     void persist(next);
     setScanName("");
@@ -599,7 +709,8 @@ export default function App() {
       }, ac.signal);
       if (gen !== genRef.current) return;
       paint(true);
-      setStatus("On the page. Edit from here — Flow still has the brief.");
+      markDocAsAi(editor);
+      setStatus("On the page. Gold is AI. Edit from here — Flow still has the brief.");
     } catch (e) {
       if (e instanceof Error && e.name === "AbortError") return;
       setError(e instanceof Error ? e.message : String(e));
@@ -817,19 +928,77 @@ export default function App() {
         <aside className="rail">
           <h2>Pages</h2>
           <div className="doc-list">
-            {docs.map((d) => (
-              <button key={d.id} className={`doc-item ${d.id === activeId ? "active" : ""}`} onClick={() => openDoc(d.id)}>
-                {d.title}
-                <small>{new Date(d.updatedAt).toLocaleString()}</small>
-              </button>
-            ))}
+            {docs
+              .filter((d) => !d.archivedAt)
+              .map((d) => (
+                <div key={d.id} className={`doc-row ${d.id === activeId ? "active" : ""}`}>
+                  <button className={`doc-item ${d.id === activeId ? "active" : ""}`} onClick={() => openDoc(d.id)}>
+                    {d.title}
+                    <small>{new Date(d.updatedAt).toLocaleString()}</small>
+                  </button>
+                  <button
+                    className="doc-mini"
+                    title="Archive"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      archiveDoc(d.id);
+                    }}
+                  >
+                    Archive
+                  </button>
+                </div>
+              ))}
           </div>
           <button className="rail-btn" onClick={createDoc}>
             + New page
           </button>
+          <button className="rail-btn" onClick={clearAndArchive}>
+            Clear & archive
+          </button>
+          <button className="rail-btn" onClick={clearPage}>
+            Clear page
+          </button>
+          <button className="rail-btn" onClick={() => archiveDoc(activeId)}>
+            Archive this page
+          </button>
           <button className="rail-btn" onClick={() => setScanOpen(true)}>
             Scan a paper
           </button>
+          {docs.some((d) => d.archivedAt) && (
+            <>
+              <h2>
+                <button className="archive-toggle" onClick={() => setShowArchive((v) => !v)}>
+                  Archive ({docs.filter((d) => d.archivedAt).length}) {showArchive ? "–" : "+"}
+                </button>
+              </h2>
+              {showArchive && (
+                <div className="doc-list">
+                  {docs
+                    .filter((d) => d.archivedAt)
+                    .sort((a, b) => (b.archivedAt ?? 0) - (a.archivedAt ?? 0))
+                    .map((d) => (
+                      <div key={d.id} className={`doc-row ${d.id === activeId ? "active" : ""}`}>
+                        <button className={`doc-item ${d.id === activeId ? "active" : ""}`} onClick={() => openDoc(d.id)}>
+                          {d.title}
+                          <small>{new Date(d.archivedAt ?? d.updatedAt).toLocaleString()}</small>
+                        </button>
+                        <button className="doc-mini" onClick={() => restoreDoc(d.id)}>
+                          Restore
+                        </button>
+                        <button
+                          className="doc-mini danger"
+                          onClick={() => {
+                            if (window.confirm(`Delete “${d.title}” forever?`)) deleteDoc(d.id);
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </>
+          )}
         </aside>
 
         <main className="stage">
@@ -854,8 +1023,12 @@ export default function App() {
               </button>
             </div>
           )}
-          <TypeBar editor={editor} />
-          <div className={`paper scale-${settings.typeScale}`} ref={paperRef} data-scale={settings.typeScale}>
+          <TypeBar
+            editor={editor}
+            showAiMarks={settings.showAiMarks}
+            onToggleAiMarks={() => void patchSettings({ showAiMarks: !settings.showAiMarks })}
+          />
+          <div className={`paper scale-${settings.typeScale}${settings.showAiMarks ? "" : " hide-ai"}`} ref={paperRef} data-scale={settings.typeScale}>
             <EditorContent editor={editor} />
           </div>
           <div className="status">
@@ -880,8 +1053,12 @@ export default function App() {
             <div className="workshop">
               <p className="kit" style={{ paddingLeft: 0 }}>
                 Argue the line. The page stays put until you drop a rewrite.
-                {sel?.text ? ` Using: “${sel.text.replace(/\s+/g, " ").trim().slice(0, 80)}${sel.text.length > 80 ? "…" : ""}”` : ""}
+                {sel?.text ? ` Using: “${sel.text.replace(/\s+/g, " ").trim().slice(0, 80)}${sel.text.length > 80 ? "…" : ""}”` : " Reading the whole page."}
               </p>
+              <details className="workshop-page" open>
+                <summary>On the page · {words} words</summary>
+                <pre>{pagePlain(editor) || "(empty — write on the paper, then ask.)"}</pre>
+              </details>
               <div className="workshop-log">
                 {((liveWorkshop ?? activeDoc?.workshop) ?? []).length === 0 && (
                   <p className="kit" style={{ paddingLeft: 0 }}>
@@ -951,6 +1128,18 @@ export default function App() {
           <button className="rail-btn" onClick={() => void enhanceNow()}>
             Enhance last paragraph
           </button>
+          <button
+            className="rail-btn"
+            onClick={() => {
+              editor?.commands.clearAiMarks();
+              setStatus("AI marks cleared. The words stay.");
+            }}
+          >
+            Clear AI marks
+          </button>
+          <p className="kit" style={{ paddingLeft: 0, marginTop: 10 }}>
+            Gold on the page is what the model wrote. HL is your highlighter. AI on the type bar hides the gold.
+          </p>
           <h2 style={{ marginTop: 28 }}>Scan</h2>
           {activeDoc?.brief ? (
             <>

@@ -384,23 +384,25 @@ export async function workshopChat(
   onDelta: (chunk: string) => void,
   signal?: AbortSignal,
 ) {
+  const page = opts.page.trim().slice(0, 16000) || "(empty)";
   return streamChat({
     settings,
-    maxTokens: 900,
+    maxTokens: 1400,
     temperature: 0.4,
     signal,
     messages: [
       {
         role: "system",
         content: writerSystem(
-          "You are Workshop, a copy chief sitting next to the writer. Answer the question about the page. Be direct. Prefer numerals, $ and % in ads, prices, and stats — never spell those out. If a required stat was paraphrased, say so and give the exact line. Do not rewrite the whole page unless they ask. If you offer a line of copy, put it on its own paragraph. No cheerleading. No preamble." +
-            briefNote(opts.brief),
+          "You are Workshop, a copy chief sitting next to the writer. You can see the PAGE — that is what is already written. Read it before you answer. Quote from it. Do not invent lines that are not on the page. Be direct. Prefer numerals, $ and % in ads, prices, and stats — never spell those out. If a required stat was paraphrased, say so and give the exact line. Do not rewrite the whole page unless they ask. If you offer a line of copy, put it on its own paragraph. No cheerleading. No preamble." +
+            briefNote(opts.brief) +
+            `\n\nPAGE (already written)\n${page}`,
         ),
       },
       ...opts.history.slice(-10),
       {
         role: "user",
-        content: `PAGE\n${opts.page.trim().slice(0, 8000) || "(empty)"}\n\nSELECTION\n${opts.selection.trim() || "(none)"}\n\nQUESTION\n${opts.question.trim()}`,
+        content: `The page is already in your context. Use it.\n\nSELECTION\n${opts.selection.trim() || "(none — talk about the whole page)"}\n\nQUESTION\n${opts.question.trim()}`,
       },
     ],
     onDelta,

@@ -55,7 +55,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "CopyWritePrime ${{ github.ref_name }}"
-          releaseBody: "Workshop a line without moving the page. Scan a paper. Triple-click a sentence. Enhance no longer wipes the draft."
+          releaseBody: "Clear and archive pages. Gold marks on AI writing. Workshop reads the page that’s already there."
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}

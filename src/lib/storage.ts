@@ -18,6 +18,7 @@ export interface DocRecord {
   title: string;
   html: string;
   updatedAt: number;
+  archivedAt?: number;
   brief?: Brief;
   workshop?: WorkshopTurn[];
 }
@@ -57,6 +58,7 @@ export async function loadSettings(): Promise<Settings> {
     flow: normalizeFlow(saved.flow),
     typeScale: normalizeTypeScale((saved as Settings & { typeScale?: unknown }).typeScale),
     autoCorrect: saved.autoCorrect !== false,
+    showAiMarks: saved.showAiMarks !== false,
   };
 }
 

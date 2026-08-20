@@ -42,7 +42,10 @@ export const FlowGhost = Extension.create({
           const ghost = key.getState(state)?.text ?? "";
           if (!ghost) return false;
           if (dispatch) {
-            tr.insertText(ghost, state.selection.from);
+            const from = state.selection.from;
+            tr.insertText(ghost, from);
+            const mark = state.schema.marks.inkMark;
+            if (mark) tr.addMark(from, from + ghost.length, mark.create({ kind: "ai" }));
             tr.setMeta(key, { text: "" });
             dispatch(tr);
           }

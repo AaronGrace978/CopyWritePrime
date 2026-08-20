@@ -119,10 +119,22 @@ export async function htmlToDocxBuffer(title: string, html: string): Promise<Uin
 
 function inlineRuns(el: Element) {
   const runs: TextRun[] = [];
-  const visit = (node: Node, bold = false, italics = false, underline = false) => {
+  const visit = (node: Node, bold = false, italics = false, underline = false, highlight?: string) => {
     if (node.nodeType === Node.TEXT_NODE) {
       const t = node.textContent ?? "";
-      if (t) runs.push(textRuns(t, { bold, italics, underline }));
+      if (t) {
+        runs.push(
+          new TextRun({
+            text: t,
+            bold,
+            italics,
+            underline: underline ? { type: "single" } : undefined,
+            highlight: highlight as "yellow" | undefined,
+            size: 24,
+            font: "Calibri",
+          }),
+        );
+      }
       return;
     }
     if (node.nodeType !== Node.ELEMENT_NODE) return;
@@ -131,7 +143,9 @@ function inlineRuns(el: Element) {
     const nextBold = bold || tag === "strong" || tag === "b";
     const nextItalics = italics || tag === "em" || tag === "i";
     const nextUnderline = underline || tag === "u";
-    e.childNodes.forEach((c) => visit(c, nextBold, nextItalics, nextUnderline));
+    const kind = e.getAttribute("data-kind");
+    const nextHighlight = tag === "mark" && kind === "user" ? "yellow" : highlight;
+    e.childNodes.forEach((c) => visit(c, nextBold, nextItalics, nextUnderline, nextHighlight));
   };
   el.childNodes.forEach((c) => visit(c));
   if (runs.length === 0) runs.push(textRuns(el.textContent ?? ""));

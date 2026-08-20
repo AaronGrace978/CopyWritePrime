@@ -160,6 +160,8 @@ button { cursor: pointer; }
 }
 
 .doc-list { display: flex; flex-direction: column; gap: 4px; }
+.doc-row { display: flex; align-items: stretch; gap: 2px; }
+.doc-row.active .doc-item { background: var(--ink-3); border-color: var(--line); }
 .doc-item, .rail-btn {
   text-align: left;
   width: 100%;
@@ -175,6 +177,28 @@ button { cursor: pointer; }
   border-color: var(--line);
 }
 .doc-item small { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+.doc-mini {
+  flex: 0 0 auto;
+  align-self: center;
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 6px 6px;
+}
+.doc-mini:hover { color: var(--gold); }
+.doc-mini.danger:hover { color: var(--danger); }
+.archive-toggle {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  padding: 0;
+}
 .rail-btn:disabled { opacity: 0.45; cursor: default; }
 .toggles button:disabled { opacity: 0.45; cursor: default; }
 
@@ -239,6 +263,22 @@ button { cursor: pointer; }
   color: #b9ae9e;
   opacity: 0.85;
   pointer-events: none;
+}
+.paper mark.ink-mark,
+.paper mark[data-kind] {
+  border-radius: 2px;
+  color: inherit;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.paper mark[data-kind="ai"] {
+  background: rgba(196, 165, 116, 0.34);
+}
+.paper mark[data-kind="user"] {
+  background: #ffe08a;
+}
+.paper.hide-ai mark[data-kind="ai"] {
+  background: transparent;
 }
 
 .status {
@@ -454,3 +494,29 @@ button { cursor: pointer; }
   outline: none;
 }
 .workshop-input:focus { border-color: var(--gold); }
+.workshop-page {
+  background: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 8px;
+  flex: 0 0 auto;
+  max-height: 38%;
+  overflow: auto;
+}
+.workshop-page summary {
+  cursor: pointer;
+  color: var(--gold);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+.workshop-page pre {
+  margin: 8px 0 2px;
+  white-space: pre-wrap;
+  font-family: var(--serif);
+  font-size: 12px;
+  line-height: 1.4;
+  color: #e8e0d4;
+  user-select: text;
+}

@@ -17,6 +17,7 @@ export interface Settings {
   flow: FlowMode;
   autoCorrect: boolean;
   typeScale: TypeScale;
+  showAiMarks: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -28,6 +29,7 @@ export const DEFAULT_SETTINGS: Settings = {
   flow: "enhance",
   autoCorrect: true,
   typeScale: "auto",
+  showAiMarks: true,
 };
 
 export function normalizeFlow(flow: unknown): FlowMode {

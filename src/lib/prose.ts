@@ -114,9 +114,42 @@ export function findLastTextRange(editor: Editor, target: string): { from: numbe
   return { from, to };
 }
 
+export function pagePlain(editor: Editor | null): string {
+  if (!editor) return "";
+  const parts: string[] = [];
+  editor.state.doc.forEach((node) => {
+    const text = node.textContent.trim();
+    if (!text) return;
+    if (node.type.name === "heading") {
+      parts.push(`${"#".repeat(node.attrs.level || 1)} ${text}`);
+    } else {
+      parts.push(text);
+    }
+  });
+  return parts.join("\n\n");
+}
+
+export function insertAiContent(editor: Editor, content: string, range?: { from: number; to: number }) {
+  const from = range?.from ?? editor.state.selection.from;
+  const to = range?.to ?? from;
+  const before = editor.state.doc.content.size;
+  const ok = editor.chain().focus().insertContentAt({ from, to }, content).run();
+  if (!ok) return false;
+  const after = editor.state.doc.content.size;
+  const end = Math.min(from + (after - before) + (to - from), editor.state.doc.content.size);
+  if (end > from) editor.chain().setTextSelection({ from, to: end }).setInkMark("ai").run();
+  return true;
+}
+
+export function markDocAsAi(editor: Editor) {
+  const size = editor.state.doc.content.size;
+  if (size <= 2) return;
+  editor.chain().selectAll().setInkMark("ai").run();
+}
+
 export function replaceLastOccurrence(editor: Editor, target: string, next: string, asHtml: boolean) {
   const range = findLastTextRange(editor, target);
   if (!range) return false;
   const content = asHtml ? inlineHtml(next) : next;
-  return editor.chain().focus().insertContentAt(range, content).run();
+  return insertAiContent(editor, content, range);
 }
