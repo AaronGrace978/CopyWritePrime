@@ -8,12 +8,18 @@ export interface Brief {
   scannedAt: number;
 }
 
+export interface WorkshopTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
 export interface DocRecord {
   id: string;
   title: string;
   html: string;
   updatedAt: number;
   brief?: Brief;
+  workshop?: WorkshopTurn[];
 }
 
 const SETTINGS_KEY = "settings";

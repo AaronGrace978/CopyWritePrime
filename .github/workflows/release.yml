@@ -55,7 +55,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "CopyWritePrime ${{ github.ref_name }}"
-          releaseBody: "Scan a paper and complete it. Triple-click a sentence. Enhance no longer wipes the page. Flow, Word export, every major model including Ollama Cloud."
+          releaseBody: "Workshop a line without moving the page. Scan a paper. Triple-click a sentence. Enhance no longer wipes the draft."
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}

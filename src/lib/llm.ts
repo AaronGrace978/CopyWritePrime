@@ -372,6 +372,41 @@ export async function completeFromBrief(
   });
 }
 
+export async function workshopChat(
+  settings: Settings,
+  opts: {
+    page: string;
+    selection: string;
+    brief?: string;
+    history: { role: "user" | "assistant"; content: string }[];
+    question: string;
+  },
+  onDelta: (chunk: string) => void,
+  signal?: AbortSignal,
+) {
+  return streamChat({
+    settings,
+    maxTokens: 900,
+    temperature: 0.4,
+    signal,
+    messages: [
+      {
+        role: "system",
+        content: writerSystem(
+          "You are Workshop, a copy chief sitting next to the writer. Answer the question about the page. Be direct. Prefer numerals, $ and % in ads, prices, and stats — never spell those out. If a required stat was paraphrased, say so and give the exact line. Do not rewrite the whole page unless they ask. If you offer a line of copy, put it on its own paragraph. No cheerleading. No preamble." +
+            briefNote(opts.brief),
+        ),
+      },
+      ...opts.history.slice(-10),
+      {
+        role: "user",
+        content: `PAGE\n${opts.page.trim().slice(0, 8000) || "(empty)"}\n\nSELECTION\n${opts.selection.trim() || "(none)"}\n\nQUESTION\n${opts.question.trim()}`,
+      },
+    ],
+    onDelta,
+  });
+}
+
 export function hasKey(settings: Settings) {
   const p = settings.provider;
   if (p === "ollama" || p === "custom") return true;

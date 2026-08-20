@@ -10,6 +10,7 @@ import { SentenceSelect } from "./extensions/sentenceSelect";
 import { exportWord } from "./lib/docx";
 import {
   completeFromBrief,
+  workshopChat,
   DEFAULT_SETTINGS,
   defaultModelFor,
   enhanceSentence,
@@ -41,6 +42,7 @@ import {
   titleFromHtml,
   type Brief,
   type DocRecord,
+  type WorkshopTurn,
 } from "./lib/storage";
 import type { FlowMode, TypeScale } from "./lib/types";
 
@@ -127,6 +129,12 @@ export default function App() {
   const [scanText, setScanText] = useState("");
   const [scanBusy, setScanBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [railTab, setRailTab] = useState<"flow" | "workshop">("flow");
+  const [workshopInput, setWorkshopInput] = useState("");
+  const [workshopBusy, setWorkshopBusy] = useState(false);
+  const [liveWorkshop, setLiveWorkshop] = useState<WorkshopTurn[] | null>(null);
+  const workshopEndRef = useRef<HTMLDivElement>(null);
+  const workshopFieldRef = useRef<HTMLTextAreaElement>(null);
   const flowTimer = useRef<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const settingsRef = useRef(settings);
@@ -266,6 +274,10 @@ export default function App() {
 
   const activeDoc = docs.find((d) => d.id === activeId);
   briefRef.current = activeDoc?.brief?.text ?? "";
+
+  useEffect(() => {
+    workshopEndRef.current?.scrollIntoView({ block: "end" });
+  }, [liveWorkshop, activeDoc?.workshop]);
 
   useEffect(() => {
     const t = window.setInterval(() => {
@@ -437,6 +449,7 @@ export default function App() {
     lastFixedRef.current = "";
     setScanName(doc.brief?.name ?? "");
     setScanText(doc.brief?.text ?? "");
+    setLiveWorkshop(null);
     editor.commands.setContent(doc.html, { emitUpdate: false });
   }
 
@@ -449,6 +462,77 @@ export default function App() {
     setScanName("");
     setScanText("");
     editor?.commands.setContent("<p></p>", { emitUpdate: false });
+  }
+
+  function setWorkshop(turns: WorkshopTurn[]) {
+    const next = snapshot().map((d) => (d.id === activeId ? { ...d, workshop: turns, updatedAt: Date.now() } : d));
+    void persist(next);
+  }
+
+  function openWorkshop() {
+    setRailTab("workshop");
+    window.setTimeout(() => workshopFieldRef.current?.focus(), 40);
+  }
+
+  async function runWorkshop(question?: string) {
+    const q = (question ?? workshopInput).trim();
+    if (!q || !editor) return;
+    const s = settingsRef.current;
+    if (!hasKey(s)) {
+      setSettingsOpen(true);
+      setError("Add a model key to workshop.");
+      return;
+    }
+    const prior = (snapshot().find((d) => d.id === activeId)?.workshop ?? []).slice();
+    const userTurn: WorkshopTurn = { role: "user", content: q };
+    const draftTurns = [...prior, userTurn, { role: "assistant" as const, content: "" }];
+    setLiveWorkshop(draftTurns);
+    setWorkshopInput("");
+    setWorkshopBusy(true);
+    setRailTab("workshop");
+    setError("");
+    setStatus("Workshop is on the line…");
+    const gen = ++genRef.current;
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
+    let acc = "";
+    try {
+      await workshopChat(
+        s,
+        {
+          page: editor.getText(),
+          selection: sel?.text ?? "",
+          brief: briefRef.current,
+          history: prior,
+          question: q,
+        },
+        (chunk) => {
+          if (gen !== genRef.current) return;
+          acc += chunk;
+          setLiveWorkshop([...prior, userTurn, { role: "assistant", content: acc }]);
+        },
+        ac.signal,
+      );
+      if (gen !== genRef.current) return;
+      const done = [...prior, userTurn, { role: "assistant" as const, content: acc.trim() || "Nothing came back." }];
+      setWorkshop(done);
+      setLiveWorkshop(null);
+      setStatus("Workshop answered. The page didn't move.");
+    } catch (e) {
+      if (e instanceof Error && e.name === "AbortError") return;
+      setLiveWorkshop(null);
+      setError(e instanceof Error ? e.message : String(e));
+      setStatus("Workshop paused.");
+    } finally {
+      setWorkshopBusy(false);
+    }
+  }
+
+  function insertWorkshop(text: string) {
+    if (!editor || !text.trim()) return;
+    editor.chain().focus().insertContent(proseToHtml(text)).run();
+    setStatus("Dropped onto the page.");
   }
 
   function attachBrief(brief: Brief) {
@@ -613,9 +697,9 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const meta = e.metaKey || e.ctrlKey;
-      if (meta && e.key.toLowerCase() === "k") {
+      if (meta && e.key.toLowerCase() === "j") {
         e.preventDefault();
-        setPalette(true);
+        openWorkshop();
       }
       if (meta && e.key.toLowerCase() === "e" && sel?.text) {
         e.preventDefault();
@@ -694,6 +778,9 @@ export default function App() {
           <button className="ghost" onClick={() => setScanOpen(true)}>
             Scan
           </button>
+          <button className={`ghost ${railTab === "workshop" ? "on" : ""}`} onClick={openWorkshop}>
+            Workshop
+          </button>
           <button className="ghost" onClick={() => void onExport()}>
             Word
           </button>
@@ -757,6 +844,14 @@ export default function App() {
                   {q.label}
                 </button>
               ))}
+              <button
+                onClick={() => {
+                  openWorkshop();
+                  if (sel.text) setWorkshopInput(`Look at this line: “${sel.text.replace(/\s+/g, " ").trim().slice(0, 280)}”`);
+                }}
+              >
+                Workshop
+              </button>
             </div>
           )}
           <TypeBar editor={editor} />
@@ -772,7 +867,60 @@ export default function App() {
           </div>
         </main>
 
-        <aside className="guard">
+        <aside className={`guard ${railTab === "workshop" ? "workshop-open" : ""}`}>
+          <div className="toggles" style={{ padding: 0, marginBottom: 12 }}>
+            <button className={railTab === "flow" ? "active" : ""} onClick={() => setRailTab("flow")}>
+              Flow
+            </button>
+            <button className={railTab === "workshop" ? "active" : ""} onClick={openWorkshop}>
+              Workshop
+            </button>
+          </div>
+          {railTab === "workshop" ? (
+            <div className="workshop">
+              <p className="kit" style={{ paddingLeft: 0 }}>
+                Argue the line. The page stays put until you drop a rewrite.
+                {sel?.text ? ` Using: “${sel.text.replace(/\s+/g, " ").trim().slice(0, 80)}${sel.text.length > 80 ? "…" : ""}”` : ""}
+              </p>
+              <div className="workshop-log">
+                {((liveWorkshop ?? activeDoc?.workshop) ?? []).length === 0 && (
+                  <p className="kit" style={{ paddingLeft: 0 }}>
+                    Ask anything. “Should I spell out $349?” “Is this headline doing the job?”
+                  </p>
+                )}
+                {((liveWorkshop ?? activeDoc?.workshop) ?? []).map((turn, i) => (
+                  <div key={`${turn.role}-${i}`} className={`workshop-turn ${turn.role}`}>
+                    <span className="label">{turn.role === "user" ? "You" : "Workshop"}</span>
+                    <p>{turn.content}</p>
+                    {turn.role === "assistant" && turn.content.trim() && (
+                      <button className="rail-btn" onClick={() => insertWorkshop(turn.content)}>
+                        Drop on page
+                      </button>
+                    )}
+                  </div>
+                ))}
+                <div ref={workshopEndRef} />
+              </div>
+              <textarea
+                ref={workshopFieldRef}
+                className="workshop-input"
+                placeholder="Workshop this…"
+                value={workshopInput}
+                disabled={workshopBusy}
+                onChange={(e) => setWorkshopInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    void runWorkshop();
+                  }
+                }}
+              />
+              <button className="rail-btn" disabled={workshopBusy || !workshopInput.trim()} onClick={() => void runWorkshop()}>
+                {workshopBusy ? "Thinking…" : "Ask"}
+              </button>
+            </div>
+          ) : (
+            <>
           <h2>Flow</h2>
           <div className="toggles" style={{ padding: 0, marginBottom: 14 }}>
             {(["off", "write", "enhance"] as FlowMode[]).map((mode) => (
@@ -843,6 +991,8 @@ export default function App() {
           <p className="kit" style={{ paddingLeft: 0, marginTop: 12 }}>
             Auto sizes the page to the window. Bold, italic, underline, headings, and local sizes live on the bar above the paper. Ctrl/Cmd B I U.
           </p>
+            </>
+          )}
         </aside>
       </div>
 

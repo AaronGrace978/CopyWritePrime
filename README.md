@@ -2,7 +2,7 @@
 
 A desktop writing studio that stays in the sentence with you.
 
-You type messy. **Flow** waits for the pause, fixes the line, lifts it, then ghosts the next words. **Tab** keeps them. **⌘K** drops a prompt on the page. **Scan** a paper — PDF, Word, or paste — and **Complete** writes the submission onto the page. Bold, italic, underline, headings, and type size sit on the bar. One click exports **Word**.
+You type messy. **Flow** waits for the pause, fixes the line, lifts it, then ghosts the next words. **Tab** keeps them. **⌘K** drops a prompt on the page. **Scan** a paper — PDF, Word, or paste — and **Complete** writes the submission onto the page. **Workshop** argues the line without moving the page. Bold, italic, underline, headings, and type size sit on the bar. One click exports **Word**.
 
 Bring your own keys. OpenAI, Anthropic, Gemini, Groq, xAI, Mistral, DeepSeek, OpenRouter, Together, Fireworks, Perplexity, Cohere, **Ollama local**, **Ollama Cloud**, and any OpenAI-compatible endpoint. Keys live in local Tauri store. Not our servers — there are no servers.
 
@@ -21,6 +21,10 @@ Drop a take-home, brief, or RFP on the page — PDF, Word, `.txt`, `.md`, or pas
 
 - **Complete this paper** — stream the finished work onto the page.
 - **Attach only** — keep the brief as project context. You write. Flow stays with you.
+
+## Workshop
+
+A copy chief in the right rail. Ask about a line without moving the page. **⌘J** opens it. Highlight a sentence and hit **Workshop** on the bar to bring that line in. **Drop on page** only when you want the rewrite.
 
 ## Ollama
 
@@ -48,8 +52,8 @@ Installers land in `src-tauri/target/release/bundle/`.
 ## Releases
 
 ```bash
-git tag v0.3.0
-git push origin v0.3.0
+git tag v0.4.0
+git push origin v0.4.0
 ```
 
 GitHub Actions builds Windows, macOS (Intel + Apple Silicon), and Linux.
@@ -62,7 +66,7 @@ GitHub Actions builds Windows, macOS (Intel + Apple Silicon), and Linux.
 | Triple-click / Alt+click | Select the sentence |
 | Esc | Dismiss ghost / overlays |
 | ⌘/Ctrl B I U | Bold / italic / underline |
-| ⌘/Ctrl K | Prompt bar |
+| ⌘/Ctrl J | Open Workshop |
 | ⌘/Ctrl E | Enhance selection |
 | ⌘/Ctrl S | Save |
 | ⌘/Ctrl P | Export Word |

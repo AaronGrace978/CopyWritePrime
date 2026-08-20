@@ -88,6 +88,10 @@ button { cursor: pointer; }
   border-radius: 999px;
   font-size: 12px;
 }
+.center-controls button.ghost.on {
+  border-color: var(--gold);
+  color: var(--gold);
+}
 .center-controls select { max-width: 280px; }
 .center-controls select.model { width: 260px; max-width: 320px; }
 
@@ -129,12 +133,20 @@ button { cursor: pointer; }
   min-height: 0;
   position: relative;
 }
+.workspace:has(.guard.workshop-open) {
+  grid-template-columns: 200px 1fr 340px;
+}
 
 .rail, .guard {
   background: var(--ink);
   min-height: 0;
   overflow: auto;
   padding: 16px 12px 24px;
+}
+.guard.workshop-open {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .rail { border-right: 1px solid var(--line); }
 .guard { border-left: 1px solid var(--line); }
@@ -401,3 +413,44 @@ button { cursor: pointer; }
   line-height: 1.45;
   outline: none;
 }
+
+.workshop {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  flex: 1;
+}
+.workshop-log {
+  flex: 1;
+  min-height: 120px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-right: 4px;
+}
+.workshop-turn p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #e8e0d4;
+  white-space: pre-wrap;
+  user-select: text;
+}
+.workshop-turn.user p { color: var(--gold-2); }
+.workshop-input {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  background: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: #f3ece3;
+  font-size: 13px;
+  font-family: var(--serif);
+  line-height: 1.4;
+  outline: none;
+}
+.workshop-input:focus { border-color: var(--gold); }
