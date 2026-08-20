@@ -17,6 +17,7 @@ import {
   type Settings,
 } from "./lib/llm";
 import { PROVIDERS, type ProviderId } from "./lib/providers";
+import { isOllamaProvider, listOllamaModels } from "./lib/ollama";
 import {
   loadActiveId,
   loadDocs,
@@ -58,6 +59,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [sel, setSel] = useState<{ x: number; y: number; text: string } | null>(null);
+  const [liveModels, setLiveModels] = useState<string[]>([]);
   const flowTimer = useRef<number | null>(null);
   const polishTimer = useRef<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -268,6 +270,36 @@ export default function App() {
     await saveSettings(next);
   }
 
+  const syncOllama = useCallback(async (s: Settings) => {
+    if (!isOllamaProvider(s.provider)) {
+      setLiveModels([]);
+      return;
+    }
+    if (s.provider === "ollama-cloud" && !s.keys["ollama-cloud"]) {
+      setLiveModels([]);
+      setStatus("Add an Ollama Cloud key, then Sync.");
+      return;
+    }
+    try {
+      const names = await listOllamaModels(s, s.provider);
+      setLiveModels(names);
+      setStatus(
+        s.provider === "ollama-cloud"
+          ? `Ollama Cloud · ${names.length} models`
+          : `Ollama local · ${names.length} models`,
+      );
+      setError("");
+    } catch (e) {
+      setLiveModels([]);
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    void syncOllama(settings);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.provider, settings.ollamaLocalHost, settings.keys["ollama-cloud"]]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const meta = e.metaKey || e.ctrlKey;
@@ -299,6 +331,9 @@ export default function App() {
 
   const words = editor?.storage.characterCount?.words?.() ?? editor?.getText().split(/\s+/).filter(Boolean).length ?? 0;
   const provider = useMemo(() => PROVIDERS.find((p) => p.id === settings.provider)!, [settings.provider]);
+  const catalog = useMemo(() => {
+    return [...new Set([settings.model, ...liveModels, ...provider.models].filter(Boolean))];
+  }, [settings.model, liveModels, provider.models]);
   const blocks = hits.filter((h) => h.severity === "block");
 
   return (
@@ -324,13 +359,24 @@ export default function App() {
               </option>
             ))}
           </select>
-          <select value={settings.model} onChange={(e) => void patchSettings({ model: e.target.value })}>
-            {[settings.model, ...provider.models.filter((m) => m !== settings.model)].map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
+          <input
+            className="model"
+            list="model-catalog"
+            value={settings.model}
+            onChange={(e) => void patchSettings({ model: e.target.value })}
+            placeholder="model"
+            spellCheck={false}
+          />
+          <datalist id="model-catalog">
+            {catalog.map((m) => (
+              <option key={m} value={m} />
             ))}
-          </select>
+          </datalist>
+          {isOllamaProvider(settings.provider) && (
+            <button className="ghost" onClick={() => void syncOllama(settings)}>
+              Sync
+            </button>
+          )}
           <button className="ghost" onClick={() => setPalette(true)}>
             Prompt ⌘K
           </button>
@@ -476,18 +522,31 @@ export default function App() {
         <div className="modal-backdrop" onMouseDown={() => setSettingsOpen(false)}>
           <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
             <h3>Every model. Your keys. Local only.</h3>
-            <p className="lead">Nothing leaves this machine except the request you send to the provider you pick. Ollama needs no key.</p>
-            {PROVIDERS.map((p) => (
-              <div className="provider-row" key={p.id}>
-                <label>{p.name}</label>
-                <input
-                  type="password"
-                  placeholder={p.placeholder}
-                  defaultValue={settings.keys[p.id] ?? ""}
-                  onBlur={(e) => void patchSettings(setProviderKey(settings, p.id, e.target.value.trim()))}
-                />
-              </div>
-            ))}
+            <p className="lead">
+              Nothing leaves this machine except the request you send to the provider you pick. Ollama Cloud uses an API key from ollama.com/settings/keys. Local Ollama needs no key — if you have signed in with <code>ollama signin</code>, <code>*-cloud</code> models work through localhost too.
+            </p>
+            {PROVIDERS.map((p) =>
+              p.id === "ollama" ? (
+                <div className="provider-row" key={p.id}>
+                  <label>{p.name}</label>
+                  <input
+                    placeholder={p.placeholder}
+                    defaultValue={settings.ollamaLocalHost}
+                    onBlur={(e) => void patchSettings({ ollamaLocalHost: e.target.value.trim() || "http://127.0.0.1:11434" })}
+                  />
+                </div>
+              ) : (
+                <div className="provider-row" key={p.id}>
+                  <label>{p.name}</label>
+                  <input
+                    type="password"
+                    placeholder={p.placeholder}
+                    defaultValue={settings.keys[p.id] ?? ""}
+                    onBlur={(e) => void patchSettings(setProviderKey(settings, p.id, e.target.value.trim()))}
+                  />
+                </div>
+              ),
+            )}
             <div className="provider-row">
               <label>Custom base URL</label>
               <input
@@ -499,6 +558,9 @@ export default function App() {
               <button className={settings.autoCorrect ? "active" : ""} onClick={() => void patchSettings({ autoCorrect: !settings.autoCorrect })}>
                 Auto-correct {settings.autoCorrect ? "on" : "off"}
               </button>
+              {isOllamaProvider(settings.provider) && (
+                <button onClick={() => void syncOllama(settings)}>Sync Ollama models</button>
+              )}
             </div>
           </div>
         </div>

@@ -12,12 +12,13 @@ export type ProviderId =
   | "perplexity"
   | "cohere"
   | "ollama"
+  | "ollama-cloud"
   | "custom";
 
 export interface ProviderDef {
   id: ProviderId;
   name: string;
-  kind: "openai" | "anthropic" | "google" | "cohere";
+  kind: "openai" | "anthropic" | "google" | "cohere" | "ollama";
   baseUrl: string;
   keyLabel: string;
   placeholder: string;
@@ -181,12 +182,43 @@ export const PROVIDERS: ProviderDef[] = [
   {
     id: "ollama",
     name: "Ollama (local)",
-    kind: "openai",
-    baseUrl: "http://127.0.0.1:11434/v1",
-    keyLabel: "Ollama (leave blank)",
-    placeholder: "not required",
-    models: ["llama3.2", "llama3.1", "mistral", "qwen2.5", "phi4"],
-    docs: "https://ollama.com",
+    kind: "ollama",
+    baseUrl: "http://127.0.0.1:11434",
+    keyLabel: "Local host (no key)",
+    placeholder: "http://127.0.0.1:11434",
+    models: [
+      "llama3.2",
+      "llama3.1",
+      "mistral",
+      "qwen2.5",
+      "phi4",
+      "gpt-oss:120b-cloud",
+      "kimi-k2.6-cloud",
+      "minimax-m3-cloud",
+    ],
+    docs: "https://docs.ollama.com/cloud",
+  },
+  {
+    id: "ollama-cloud",
+    name: "Ollama Cloud",
+    kind: "ollama",
+    baseUrl: "https://ollama.com",
+    keyLabel: "Ollama Cloud API key",
+    placeholder: "ollama_...",
+    models: [
+      "gpt-oss:120b",
+      "gpt-oss:20b",
+      "kimi-k2.6",
+      "kimi-k2.7-code",
+      "minimax-m2.7",
+      "minimax-m3",
+      "glm-5.2",
+      "qwen3.5:397b",
+      "gemma4:31b",
+      "deepseek-v4-flash",
+      "mistral-large-3:675b",
+    ],
+    docs: "https://ollama.com/settings/keys",
   },
   {
     id: "custom",

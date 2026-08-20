@@ -1,42 +1,11 @@
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { PROVIDERS, providerById, type ProviderId } from "./providers";
 import { SUPERPOWER_SYSTEM } from "./compliance";
+import { httpFetch } from "./http";
+import { isOllamaProvider, streamOllamaChat } from "./ollama";
+import { DEFAULT_SETTINGS, type ChatMessage, type Settings } from "./types";
 
-export interface Settings {
-  keys: Partial<Record<ProviderId, string>>;
-  customBaseUrl: string;
-  provider: ProviderId;
-  model: string;
-  flow: "off" | "light" | "full";
-  autoCorrect: boolean;
-  brandKit: "none" | "superpower";
-}
-
-export const DEFAULT_SETTINGS: Settings = {
-  keys: {},
-  customBaseUrl: "http://127.0.0.1:1234/v1",
-  provider: "openai",
-  model: "gpt-4o",
-  flow: "full",
-  autoCorrect: true,
-  brandKit: "superpower",
-};
-
-function inTauri() {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-}
-
-async function httpFetch(url: string, init: RequestInit): Promise<Response> {
-  if (inTauri()) {
-    return tauriFetch(url, init) as Promise<Response>;
-  }
-  return fetch(url, init);
-}
-
-export interface ChatMessage {
-  role: "system" | "user" | "assistant";
-  content: string;
-}
+export type { ChatMessage, Settings };
+export { DEFAULT_SETTINGS };
 
 function brandSystem(settings: Settings, extra?: string) {
   const parts = [
@@ -121,7 +90,7 @@ export async function streamChat(opts: {
 }): Promise<string> {
   const provider = providerById(opts.settings.provider);
   const key = opts.settings.keys[provider.id] ?? "";
-  if (provider.id !== "ollama" && provider.id !== "custom" && !key) {
+  if (!isOllamaProvider(provider.id) && provider.id !== "custom" && !key) {
     throw new Error(`Add a ${provider.name} key in Settings.`);
   }
 
@@ -130,6 +99,10 @@ export async function streamChat(opts: {
   const model = opts.settings.model || provider.models[0];
   const maxTokens = opts.maxTokens ?? 800;
   const temperature = opts.temperature ?? 0.6;
+
+  if (provider.kind === "ollama") {
+    return streamOllamaChat(opts);
+  }
 
   if (provider.kind === "anthropic") {
     const system = opts.messages
@@ -322,8 +295,7 @@ export async function transform(settings: Settings, instruction: string, source:
 
 export function hasKey(settings: Settings) {
   const p = settings.provider;
-  if (p === "ollama") return true;
-  if (p === "custom") return true;
+  if (p === "ollama" || p === "custom") return true;
   return Boolean(settings.keys[p]);
 }
 

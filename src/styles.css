@@ -78,7 +78,8 @@ button { cursor: pointer; }
   gap: 8px;
 }
 .center-controls select,
-.center-controls button.ghost {
+.center-controls button.ghost,
+.center-controls input.model {
   background: var(--ink-3);
   color: #f3ece3;
   border: 1px solid var(--line);
@@ -88,6 +89,7 @@ button { cursor: pointer; }
   font-size: 12px;
 }
 .center-controls select { max-width: 240px; }
+.center-controls input.model { width: 200px; }
 
 .workspace {
   display: grid;

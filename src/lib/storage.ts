@@ -40,6 +40,7 @@ export async function loadSettings(): Promise<Settings> {
     ...DEFAULT_SETTINGS,
     ...saved,
     keys: { ...DEFAULT_SETTINGS.keys, ...saved.keys },
+    ollamaLocalHost: saved.ollamaLocalHost || DEFAULT_SETTINGS.ollamaLocalHost,
   };
 }
 
