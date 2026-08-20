@@ -1,4 +1,5 @@
 import { httpFetch } from "./http";
+import { OLLAMA_CLOUD_MODELS, OLLAMA_LOCAL_MODELS } from "./ollamaCatalog";
 import type { ChatMessage, Settings } from "./types";
 import type { ProviderId } from "./providers";
 
@@ -27,17 +28,23 @@ async function errorText(res: Response) {
 }
 
 export async function listOllamaModels(settings: Settings, id: ProviderId): Promise<string[]> {
-  const base = ollamaBase(settings, id);
-  const key = ollamaAuth(settings, id);
-  const headers: Record<string, string> = { accept: "application/json" };
-  if (key) headers.authorization = `Bearer ${key}`;
-  const res = await httpFetch(`${base}/api/tags`, { method: "GET", headers });
-  if (!res.ok) throw new Error(await errorText(res));
-  const json = (await res.json()) as { models?: Array<{ name?: string; model?: string }> };
-  const names = (json.models ?? [])
-    .map((m) => m.name || m.model || "")
-    .filter(Boolean);
-  return [...new Set(names)].sort((a, b) => a.localeCompare(b));
+  const baked = id === "ollama-cloud" ? [...OLLAMA_CLOUD_MODELS] : [...OLLAMA_LOCAL_MODELS];
+  try {
+    const base = ollamaBase(settings, id);
+    const key = ollamaAuth(settings, id);
+    const headers: Record<string, string> = { accept: "application/json" };
+    if (key) headers.authorization = `Bearer ${key}`;
+    const res = await httpFetch(`${base}/api/tags`, { method: "GET", headers });
+    if (!res.ok) throw new Error(await errorText(res));
+    const json = (await res.json()) as { models?: Array<{ name?: string; model?: string }> };
+    const live = (json.models ?? []).map((m) => m.name || m.model || "").filter(Boolean);
+    const bakedSet = new Set<string>(baked);
+    const extras = live.filter((name) => !bakedSet.has(name));
+    return [...new Set([...extras, ...baked, ...live])];
+  } catch (e) {
+    if (id === "ollama-cloud") return baked;
+    throw e;
+  }
 }
 
 async function readNdjson(

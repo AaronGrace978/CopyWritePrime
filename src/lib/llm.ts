@@ -1,19 +1,16 @@
 import { PROVIDERS, providerById, type ProviderId } from "./providers";
-import { SUPERPOWER_SYSTEM } from "./compliance";
 import { httpFetch } from "./http";
 import { isOllamaProvider, streamOllamaChat } from "./ollama";
-import { DEFAULT_SETTINGS, type ChatMessage, type Settings } from "./types";
+import { DEFAULT_SETTINGS, normalizeFlow, normalizeTypeScale, type ChatMessage, type Settings } from "./types";
 
 export type { ChatMessage, Settings };
-export { DEFAULT_SETTINGS };
+export { DEFAULT_SETTINGS, normalizeFlow, normalizeTypeScale };
 
-function brandSystem(settings: Settings, extra?: string) {
-  const parts = [
+function writerSystem(extra?: string) {
+  return (
     extra ??
-      "You are CopyWritePrime, a writing instrument. Match the writer's voice. Be concrete. Never announce that you are an AI. Return only the requested prose.",
-  ];
-  if (settings.brandKit === "superpower") parts.push(SUPERPOWER_SYSTEM);
-  return parts.join("\n\n");
+    "You are CopyWritePrime, a writing instrument sitting in the sentence with a fast, messy typer. Match their voice. Be concrete. Never announce that you are an AI. Return only the requested prose."
+  );
 }
 
 async function readSse(
@@ -220,20 +217,36 @@ async function errorText(res: Response) {
   }
 }
 
-export async function flowContinue(settings: Settings, preceding: string, onDelta: (c: string) => void) {
+function cleanModelText(out: string) {
+  return out
+    .trim()
+    .replace(/^["']|["']$/g, "")
+    .replace(/^```(?:\w+)?\n?|\n?```$/g, "")
+    .trim();
+}
+
+export async function flowContinue(
+  settings: Settings,
+  preceding: string,
+  onDelta: (c: string) => void,
+  signal?: AbortSignal,
+) {
   const trimmed = preceding.trim();
-  if (trimmed.length < 12) return "";
-  const tail = trimmed.slice(-1400);
+  if (trimmed.length < 8) return "";
+  const tail = trimmed.slice(-1600);
+  const enhance = settings.flow === "enhance";
   return streamChat({
     settings,
-    maxTokens: settings.flow === "light" ? 28 : 48,
+    maxTokens: enhance ? 110 : 70,
     temperature: 0.7,
+    signal,
     messages: [
       {
         role: "system",
-        content: brandSystem(
-          settings,
-          "Continue the writer's next few words in their exact voice. 8–18 words. No quotes, no preamble, no restarting the sentence they already wrote. If the thought is complete, return nothing.",
+        content: writerSystem(
+          enhance
+            ? "You are in the sentence with the writer. They type fast and messy. Continue 15–40 words in their voice, slightly sharper and more concrete. Finish the thought they started. No quotes, no preamble, no restarting what they already wrote. If the thought is complete, return nothing."
+            : "You are in the sentence with the writer. They type fast and messy. Continue 10–28 words in their exact voice as they meant it. Finish the fragment if it is unfinished. No quotes, no preamble, no restarting. If the thought is complete, return nothing.",
         ),
       },
       { role: "user", content: tail },
@@ -242,18 +255,18 @@ export async function flowContinue(settings: Settings, preceding: string, onDelt
   });
 }
 
-export async function polishSentence(settings: Settings, sentence: string) {
+export async function polishSentence(settings: Settings, sentence: string, signal?: AbortSignal) {
   let out = "";
   await streamChat({
     settings,
-    maxTokens: 120,
+    maxTokens: 160,
     temperature: 0.1,
+    signal,
     messages: [
       {
         role: "system",
-        content: brandSystem(
-          settings,
-          "Fix typos, grammar, and obvious clarity only. Preserve voice and meaning. If the sentence is already correct, return exactly NOOP. Return only the corrected sentence or NOOP.",
+        content: writerSystem(
+          "This writer types fast and messy. Fix spelling, grammar, missing words, and punctuation. Keep their voice, slang, and rhythm. Do not add ideas. Do not get fancier. If it is already correct, return exactly NOOP. Return only the corrected sentence or NOOP.",
         ),
       },
       { role: "user", content: sentence },
@@ -262,7 +275,32 @@ export async function polishSentence(settings: Settings, sentence: string) {
       out += c;
     },
   });
-  const cleaned = out.trim().replace(/^["']|["']$/g, "");
+  const cleaned = cleanModelText(out);
+  if (!cleaned || cleaned === "NOOP" || cleaned === sentence.trim()) return null;
+  return cleaned;
+}
+
+export async function enhanceSentence(settings: Settings, sentence: string, signal?: AbortSignal) {
+  let out = "";
+  await streamChat({
+    settings,
+    maxTokens: 220,
+    temperature: 0.35,
+    signal,
+    messages: [
+      {
+        role: "system",
+        content: writerSystem(
+          "This writer types fast and messy. First fix errors. Then make the line one notch clearer and more specific. Same person, same meaning. You may mark one or two punch words with **bold**. No extra sentences. No slogans. If it is already strong and clean, return exactly NOOP. Return only the line or NOOP.",
+        ),
+      },
+      { role: "user", content: sentence },
+    ],
+    onDelta: (c) => {
+      out += c;
+    },
+  });
+  const cleaned = cleanModelText(out);
   if (!cleaned || cleaned === "NOOP" || cleaned === sentence.trim()) return null;
   return cleaned;
 }
@@ -276,9 +314,8 @@ export async function transform(settings: Settings, instruction: string, source:
     messages: [
       {
         role: "system",
-        content: brandSystem(
-          settings,
-          "Rewrite or generate copy per the instruction. Return only the copy, no commentary, no markdown fences unless the source used them.",
+        content: writerSystem(
+          "Rewrite or generate copy per the instruction. Return only the copy. You may use markdown: # ## ### headings, **bold**, *italic*. No commentary. No code fences.",
         ),
       },
       {
@@ -290,7 +327,7 @@ export async function transform(settings: Settings, instruction: string, source:
       out += c;
     },
   });
-  return out.trim();
+  return cleanModelText(out);
 }
 
 export function hasKey(settings: Settings) {

@@ -5,15 +5,18 @@ export interface ChatMessage {
   content: string;
 }
 
+export type FlowMode = "off" | "write" | "enhance";
+export type TypeScale = "auto" | "sm" | "md" | "lg";
+
 export interface Settings {
   keys: Partial<Record<ProviderId, string>>;
   customBaseUrl: string;
   ollamaLocalHost: string;
   provider: ProviderId;
   model: string;
-  flow: "off" | "light" | "full";
+  flow: FlowMode;
   autoCorrect: boolean;
-  brandKit: "none" | "superpower";
+  typeScale: TypeScale;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -22,7 +25,18 @@ export const DEFAULT_SETTINGS: Settings = {
   ollamaLocalHost: "http://127.0.0.1:11434",
   provider: "openai",
   model: "gpt-4o",
-  flow: "full",
+  flow: "enhance",
   autoCorrect: true,
-  brandKit: "superpower",
+  typeScale: "auto",
 };
+
+export function normalizeFlow(flow: unknown): FlowMode {
+  if (flow === "off") return "off";
+  if (flow === "light" || flow === "write") return "write";
+  return "enhance";
+}
+
+export function normalizeTypeScale(scale: unknown): TypeScale {
+  if (scale === "sm" || scale === "md" || scale === "lg" || scale === "auto") return scale;
+  return "auto";
+}

@@ -13,11 +13,12 @@ function inTauri() {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-function textRuns(text: string, opts?: { bold?: boolean; italics?: boolean; size?: number }) {
+function textRuns(text: string, opts?: { bold?: boolean; italics?: boolean; underline?: boolean; size?: number }) {
   return new TextRun({
     text,
     bold: opts?.bold,
     italics: opts?.italics,
+    underline: opts?.underline ? { type: "single" } : undefined,
     size: opts?.size ?? 24,
     font: "Calibri",
   });
@@ -118,10 +119,10 @@ export async function htmlToDocxBuffer(title: string, html: string): Promise<Uin
 
 function inlineRuns(el: Element) {
   const runs: TextRun[] = [];
-  const visit = (node: Node, bold = false, italics = false) => {
+  const visit = (node: Node, bold = false, italics = false, underline = false) => {
     if (node.nodeType === Node.TEXT_NODE) {
       const t = node.textContent ?? "";
-      if (t) runs.push(textRuns(t, { bold, italics }));
+      if (t) runs.push(textRuns(t, { bold, italics, underline }));
       return;
     }
     if (node.nodeType !== Node.ELEMENT_NODE) return;
@@ -129,7 +130,8 @@ function inlineRuns(el: Element) {
     const tag = e.tagName.toLowerCase();
     const nextBold = bold || tag === "strong" || tag === "b";
     const nextItalics = italics || tag === "em" || tag === "i";
-    e.childNodes.forEach((c) => visit(c, nextBold, nextItalics));
+    const nextUnderline = underline || tag === "u";
+    e.childNodes.forEach((c) => visit(c, nextBold, nextItalics, nextUnderline));
   };
   el.childNodes.forEach((c) => visit(c));
   if (runs.length === 0) runs.push(textRuns(el.textContent ?? ""));

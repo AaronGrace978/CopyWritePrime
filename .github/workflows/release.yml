@@ -55,7 +55,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "CopyWritePrime ${{ github.ref_name }}"
-          releaseBody: "Desktop writing studio — Flow, prompt-to-prose, brand Guard, Word export, every major model provider."
+          releaseBody: "Flow that actually writes with you — pause to fix and enhance the line, ghost the next words, type bar (bold/italic/headings/auto size), Word export, every major model provider including Ollama Cloud."
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}

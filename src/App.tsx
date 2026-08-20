@@ -1,21 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { CharacterCount, Placeholder } from "@tiptap/extensions";
-import { EditorContent, useEditor } from "@tiptap/react";
+import { FontSize, TextStyle } from "@tiptap/extension-text-style";
+import Underline from "@tiptap/extension-underline";
+import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { ASSESSMENT_HTML } from "./data/assessment";
 import { FlowGhost } from "./extensions/flowGhost";
-import { scanCompliance, SUPERPOWER_ANCHORS, SUPERPOWER_STATS, type GuardHit } from "./lib/compliance";
 import { exportWord } from "./lib/docx";
 import {
   DEFAULT_SETTINGS,
   defaultModelFor,
+  enhanceSentence,
   flowContinue,
   hasKey,
   polishSentence,
   transform,
   type Settings,
 } from "./lib/llm";
+import { findLastTextRange, lastParagraph, lastWritingUnit, proseToHtml, replaceLastOccurrence } from "./lib/prose";
 import { PROVIDERS, type ProviderId } from "./lib/providers";
 import { isOllamaProvider, listOllamaModels } from "./lib/ollama";
 import {
@@ -30,12 +32,22 @@ import {
   titleFromHtml,
   type DocRecord,
 } from "./lib/storage";
+import type { FlowMode, TypeScale } from "./lib/types";
 
 const QUICK = [
+  { label: "Fix", prompt: "Fix spelling, grammar, missing words, and punctuation. Keep the voice. No extra ideas. No preamble." },
+  { label: "Enhance", prompt: "Fix errors, then make this one notch clearer and more specific. Same person. You may **bold** one punch phrase. Use a heading if this is a title. No preamble." },
   { label: "Tighten", prompt: "Tighten this copy. Keep the voice. Cut fat. No preamble." },
-  { label: "Sharper", prompt: "Make this punchier and more specific. No slogans. No preamble." },
-  { label: "Human", prompt: "Rewrite so it sounds like a person wrote it for a person. Kill marketing fog." },
-  { label: "Guard", prompt: "Rewrite to Superpower compliance. Biomarkers not lab tests. Care team not medical team. No prevent/cure/treat/diagnose. Keep the heat." },
+  { label: "Human", prompt: "Rewrite so it sounds like a person wrote it for a person. Kill marketing fog. Keep the meaning." },
+];
+
+const SIZES = [
+  { label: "Auto", value: "" },
+  { label: "S", value: "16px" },
+  { label: "M", value: "18px" },
+  { label: "L", value: "22px" },
+  { label: "XL", value: "28px" },
+  { label: "Title", value: "36px" },
 ];
 
 function inTauri() {
@@ -47,13 +59,53 @@ async function win() {
   return getCurrentWindow();
 }
 
+function TypeBar({ editor }: { editor: Editor | null }) {
+  if (!editor) return null;
+  const size = (editor.getAttributes("textStyle").fontSize as string | undefined) ?? "";
+  return (
+    <div className="typebar">
+      <button className={editor.isActive("bold") ? "active" : ""} onClick={() => editor.chain().focus().toggleBold().run()}>
+        B
+      </button>
+      <button className={editor.isActive("italic") ? "active" : ""} onClick={() => editor.chain().focus().toggleItalic().run()}>
+        I
+      </button>
+      <button className={editor.isActive("underline") ? "active" : ""} onClick={() => editor.chain().focus().toggleUnderline().run()}>
+        U
+      </button>
+      <span className="type-gap" />
+      <button className={editor.isActive("heading", { level: 1 }) ? "active" : ""} onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}>
+        H1
+      </button>
+      <button className={editor.isActive("heading", { level: 2 }) ? "active" : ""} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}>
+        H2
+      </button>
+      <button className={editor.isActive("paragraph") && !editor.isActive("heading") ? "active" : ""} onClick={() => editor.chain().focus().setParagraph().run()}>
+        Body
+      </button>
+      <span className="type-gap" />
+      {SIZES.map((s) => (
+        <button
+          key={s.label}
+          className={s.value === size || (s.value === "" && !size) ? "active" : ""}
+          onClick={() => {
+            if (!s.value) editor.chain().focus().unsetFontSize().run();
+            else editor.chain().focus().setFontSize(s.value).run();
+          }}
+        >
+          {s.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export default function App() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [docs, setDocs] = useState<DocRecord[]>([]);
   const [activeId, setActiveId] = useState("");
-  const [status, setStatus] = useState("Flow is waiting.");
+  const [status, setStatus] = useState("Start typing. Flow stays in the sentence.");
   const [error, setError] = useState("");
-  const [hits, setHits] = useState<GuardHit[]>([]);
   const [palette, setPalette] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -61,27 +113,33 @@ export default function App() {
   const [sel, setSel] = useState<{ x: number; y: number; text: string } | null>(null);
   const [liveModels, setLiveModels] = useState<string[]>([]);
   const flowTimer = useRef<number | null>(null);
-  const polishTimer = useRef<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const settingsRef = useRef(settings);
+  const applyingRef = useRef(false);
+  const genRef = useRef(0);
+  const lastFixedRef = useRef("");
+  const paperRef = useRef<HTMLDivElement>(null);
+  const onPauseRef = useRef<() => Promise<void>>(async () => undefined);
   settingsRef.current = settings;
 
   const editor = useEditor({
     immediatelyRender: false,
     extensions: [
       StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
-      Placeholder.configure({ placeholder: "The sentence starts. Flow finishes it." }),
+      Underline,
+      TextStyle,
+      FontSize,
+      Placeholder.configure({ placeholder: "Start typing. Flow fixes the line, then keeps writing with you." }),
       CharacterCount,
       FlowGhost,
     ],
-    content: ASSESSMENT_HTML,
+    content: "<p></p>",
     onUpdate: ({ editor: ed }) => {
-      const text = ed.getText();
-      setHits(settingsRef.current.brandKit === "superpower" ? scanCompliance(text) : []);
+      if (applyingRef.current) return;
       if (flowTimer.current) window.clearTimeout(flowTimer.current);
       ed.commands.clearFlowGhost();
-      flowTimer.current = window.setTimeout(() => void runFlow(ed.getText()), 700);
-      maybePolish(text);
+      abortRef.current?.abort();
+      flowTimer.current = window.setTimeout(() => void onPauseRef.current(), 850);
     },
     onSelectionUpdate: ({ editor: ed }) => {
       const { from, to } = ed.state.selection;
@@ -105,13 +163,7 @@ export default function App() {
         existing = [
           {
             id: newId(),
-            title: "You're Fine. — Superpower assessment",
-            html: ASSESSMENT_HTML,
-            updatedAt: Date.now(),
-          },
-          {
-            id: newId(),
-            title: "Blank page",
+            title: "Untitled",
             html: "<p></p>",
             updatedAt: Date.now(),
           },
@@ -123,11 +175,26 @@ export default function App() {
       const current = existing.find((d) => d.id === savedActive) ?? existing[0];
       setActiveId(current.id);
       editor?.commands.setContent(current.html, { emitUpdate: false });
-      setHits(loaded.brandKit === "superpower" ? scanCompliance(editor?.getText() ?? current.title) : []);
     })();
-    // editor is created once
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor]);
+
+  useEffect(() => {
+    const el = paperRef.current;
+    if (!el) return;
+    if (settings.typeScale !== "auto") {
+      el.style.removeProperty("--body-size");
+      return;
+    }
+    const apply = () => {
+      const size = Math.round(Math.min(26, Math.max(17, el.clientWidth / 38)));
+      el.style.setProperty("--body-size", `${size}px`);
+    };
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [settings.typeScale]);
 
   const persist = useCallback(
     async (nextDocs: DocRecord[], id = activeId) => {
@@ -159,46 +226,63 @@ export default function App() {
     return () => window.clearInterval(t);
   }, [persist, snapshot]);
 
-  async function runFlow(text: string) {
+  async function onPause() {
     const s = settingsRef.current;
-    if (s.flow === "off" || !hasKey(s) || !editor) return;
-    if (busy) return;
+    if (!editor || !hasKey(s) || busy) return;
+    const gen = ++genRef.current;
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
+
+    if (s.autoCorrect) {
+      const unit = lastWritingUnit(editor.getText());
+      if (unit && unit.length >= 10 && unit !== lastFixedRef.current) {
+        setError("");
+        setStatus(s.flow === "enhance" ? "Enhancing the line…" : "Fixing the line…");
+        try {
+          const next =
+            s.flow === "enhance"
+              ? await enhanceSentence(s, unit, ac.signal)
+              : await polishSentence(s, unit, ac.signal);
+          if (gen !== genRef.current) return;
+          if (next) {
+            applyingRef.current = true;
+            replaceLastOccurrence(editor, unit, next, s.flow === "enhance");
+            lastFixedRef.current = next.replace(/\*\*/g, "").replace(/\*/g, "");
+            applyingRef.current = false;
+            setStatus(s.flow === "enhance" ? "Line enhanced. Tab keeps the next words." : "Line fixed. Tab keeps the next words.");
+          }
+        } catch (e) {
+          if (gen !== genRef.current) return;
+          setError(e instanceof Error ? e.message : String(e));
+        }
+      }
+    }
+
+    if (s.flow === "off" || gen !== genRef.current) return;
+    await runFlow(editor.getText(), gen, ac);
+  }
+  onPauseRef.current = onPause;
+
+  async function runFlow(text: string, gen: number, ac: AbortController) {
+    const s = settingsRef.current;
+    if (s.flow === "off" || !hasKey(s) || !editor) return;
     setError("");
     setStatus("Flow is drafting…");
     try {
       let acc = "";
       await flowContinue(s, text, (chunk) => {
+        if (gen !== genRef.current) return;
         acc += chunk;
         editor.commands.setFlowGhost(acc.replace(/\s+/g, " ").replace(/^[\s,.;:]+/, ""));
-      });
+      }, ac.signal);
+      if (gen !== genRef.current || ac.signal.aborted) return;
       setStatus(acc.trim() ? "Tab to keep the line. Esc to dismiss." : "Flow is listening.");
     } catch (e) {
+      if (gen !== genRef.current) return;
+      if (e instanceof Error && e.name === "AbortError") return;
       setError(e instanceof Error ? e.message : String(e));
       setStatus("Flow paused.");
-    }
-  }
-
-  function maybePolish(text: string) {
-    const s = settingsRef.current;
-    if (!s.autoCorrect || !hasKey(s)) return;
-    if (!/[.!?]$/.test(text.trim())) return;
-    if (polishTimer.current) window.clearTimeout(polishTimer.current);
-    polishTimer.current = window.setTimeout(() => void runPolish(text), 900);
-  }
-
-  async function runPolish(text: string) {
-    const sentences = text.split(/(?<=[.!?])\s+/);
-    const last = sentences[sentences.length - 1]?.trim();
-    if (!last || last.length < 18 || !editor) return;
-    try {
-      const next = await polishSentence(settingsRef.current, last);
-      if (!next) return;
-      setStatus(`Corrected: ${next}`);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
     }
   }
 
@@ -216,12 +300,7 @@ export default function App() {
     const selected = source ?? editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to, " ");
     try {
       const out = await transform(s, instruction, selected || editor.getText().slice(-2000));
-      const html = `<p>${out
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/\n\n/g, "</p><p>")
-        .replace(/\n/g, "<br>")}</p>`;
+      const html = proseToHtml(out);
       const chain = editor.chain().focus();
       if (selected) chain.deleteSelection();
       chain.insertContent(html).run();
@@ -236,12 +315,48 @@ export default function App() {
     }
   }
 
+  async function fixNow() {
+    if (!editor || !hasKey(settingsRef.current)) {
+      setSettingsOpen(true);
+      return;
+    }
+    const unit = lastWritingUnit(editor.getText());
+    if (!unit) return;
+    setStatus("Fixing the line…");
+    try {
+      const next = await polishSentence(settingsRef.current, unit);
+      if (next) {
+        applyingRef.current = true;
+        replaceLastOccurrence(editor, unit, next, false);
+        lastFixedRef.current = next;
+        applyingRef.current = false;
+        setStatus("Line fixed.");
+      } else {
+        setStatus("Already clean.");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function enhanceNow() {
+    if (!editor) return;
+    const para = lastParagraph(editor.getText()) || editor.getText();
+    const range = findLastTextRange(editor, para);
+    if (range) editor.chain().focus().setTextSelection(range).run();
+    await runTransform(
+      "Fix errors, then enhance this. Same person. **Bold** the punch. Use # for a title if the first line is a title. Keep it them.",
+      para,
+    );
+  }
+
   function openDoc(id: string) {
     const next = snapshot();
     const doc = next.find((d) => d.id === id);
     if (!doc || !editor) return;
     void persist(next, id);
     setActiveId(id);
+    lastFixedRef.current = "";
     editor.commands.setContent(doc.html, { emitUpdate: false });
   }
 
@@ -250,6 +365,7 @@ export default function App() {
     const doc: DocRecord = { id: newId(), title: "Untitled", html: "<p></p>", updatedAt: Date.now() };
     void persist([doc, ...nextDocs], doc.id);
     setActiveId(doc.id);
+    lastFixedRef.current = "";
     editor?.commands.setContent("<p></p>", { emitUpdate: false });
   }
 
@@ -275,17 +391,12 @@ export default function App() {
       setLiveModels([]);
       return;
     }
-    if (s.provider === "ollama-cloud" && !s.keys["ollama-cloud"]) {
-      setLiveModels([]);
-      setStatus("Add an Ollama Cloud key, then Sync.");
-      return;
-    }
     try {
       const names = await listOllamaModels(s, s.provider);
       setLiveModels(names);
       setStatus(
         s.provider === "ollama-cloud"
-          ? `Ollama Cloud · ${names.length} models`
+          ? `Ollama Cloud · ${names.length} models${s.keys["ollama-cloud"] ? "" : " · add a key to write"}`
           : `Ollama local · ${names.length} models`,
       );
       setError("");
@@ -309,7 +420,7 @@ export default function App() {
       }
       if (meta && e.key.toLowerCase() === "e" && sel?.text) {
         e.preventDefault();
-        void runTransform("Tighten this copy. Keep voice. No preamble.", sel.text);
+        void runTransform(QUICK[1].prompt, sel.text);
       }
       if (meta && e.key.toLowerCase() === "s") {
         e.preventDefault();
@@ -334,7 +445,6 @@ export default function App() {
   const catalog = useMemo(() => {
     return [...new Set([settings.model, ...liveModels, ...provider.models].filter(Boolean))];
   }, [settings.model, liveModels, provider.models]);
-  const blocks = hits.filter((h) => h.severity === "block");
 
   return (
     <div className="app">
@@ -359,19 +469,20 @@ export default function App() {
               </option>
             ))}
           </select>
-          <input
+          <select
             className="model"
-            list="model-catalog"
             value={settings.model}
             onChange={(e) => void patchSettings({ model: e.target.value })}
-            placeholder="model"
-            spellCheck={false}
-          />
-          <datalist id="model-catalog">
+          >
+            {!catalog.includes(settings.model) && settings.model && (
+              <option value={settings.model}>{settings.model}</option>
+            )}
             {catalog.map((m) => (
-              <option key={m} value={m} />
+              <option key={m} value={m}>
+                {m}
+              </option>
             ))}
-          </datalist>
+          </select>
           {isOllamaProvider(settings.provider) && (
             <button className="ghost" onClick={() => void syncOllama(settings)}>
               Sync
@@ -396,7 +507,7 @@ export default function App() {
 
       <div className="workspace">
         <aside className="rail">
-          <h2>Pieces</h2>
+          <h2>Pages</h2>
           <div className="doc-list">
             {docs.map((d) => (
               <button key={d.id} className={`doc-item ${d.id === activeId ? "active" : ""}`} onClick={() => openDoc(d.id)}>
@@ -408,21 +519,6 @@ export default function App() {
           <button className="rail-btn" onClick={createDoc}>
             + New page
           </button>
-          <h2 style={{ marginTop: 28 }}>Flow</h2>
-          <div className="toggles" style={{ padding: 0 }}>
-            {(["off", "light", "full"] as const).map((mode) => (
-              <button
-                key={mode}
-                className={settings.flow === mode ? "active" : ""}
-                onClick={() => void patchSettings({ flow: mode })}
-              >
-                {mode}
-              </button>
-            ))}
-          </div>
-          <p className="kit" style={{ paddingLeft: 0, marginTop: 12 }}>
-            Ghost text arrives when you pause. Tab keeps the line. Prompt bar inserts a rewrite or a new block. Auto-correct waits for the period.
-          </p>
         </aside>
 
         <main className="stage">
@@ -435,7 +531,8 @@ export default function App() {
               ))}
             </div>
           )}
-          <div className="paper">
+          <TypeBar editor={editor} />
+          <div className={`paper scale-${settings.typeScale}`} ref={paperRef} data-scale={settings.typeScale}>
             <EditorContent editor={editor} />
           </div>
           <div className="status">
@@ -443,54 +540,56 @@ export default function App() {
               {error ? <span className="err">{error}</span> : status}{" "}
               {!hasKey(settings) && <b> · add a key to unlock Flow</b>}
             </span>
-            <span>
-              {words} words
-              {settings.brandKit === "superpower" && (
-                <>
-                  {" "}
-                  · Guard {blocks.length === 0 ? <b>clear</b> : <span className="err">{blocks.length} block</span>}
-                </>
-              )}
-            </span>
+            <span>{words} words</span>
           </div>
         </main>
 
         <aside className="guard">
-          <h2>Superpower Guard</h2>
-          <div className="toggles" style={{ padding: 0, marginBottom: 12 }}>
-            <button className={settings.brandKit === "superpower" ? "active" : ""} onClick={() => void patchSettings({ brandKit: "superpower" })}>
-              On
-            </button>
-            <button className={settings.brandKit === "none" ? "active" : ""} onClick={() => void patchSettings({ brandKit: "none" })}>
-              Off
+          <h2>Flow</h2>
+          <div className="toggles" style={{ padding: 0, marginBottom: 14 }}>
+            {(["off", "write", "enhance"] as FlowMode[]).map((mode) => (
+              <button
+                key={mode}
+                className={settings.flow === mode ? "active" : ""}
+                onClick={() => void patchSettings({ flow: mode })}
+              >
+                {mode}
+              </button>
+            ))}
+          </div>
+          <p className="kit" style={{ paddingLeft: 0 }}>
+            {settings.flow === "off"
+              ? "Ghost text is off. Auto-fix can still clean the last line when you pause."
+              : settings.flow === "write"
+                ? "When you pause, Flow fixes typos, then ghosts the next words. Tab keeps them."
+                : "When you pause, Flow fixes the line, lifts it, then ghosts the next words. Tab keeps them."}
+          </p>
+          <div className="toggles" style={{ padding: 0, margin: "14px 0" }}>
+            <button className={settings.autoCorrect ? "active" : ""} onClick={() => void patchSettings({ autoCorrect: !settings.autoCorrect })}>
+              Auto-fix {settings.autoCorrect ? "on" : "off"}
             </button>
           </div>
-          {settings.brandKit === "none" ? (
-            <p className="kit" style={{ paddingLeft: 0 }}>
-              Guard is off. Flow will match your voice with no health rails.
-            </p>
-          ) : hits.length === 0 ? (
-            <div className="ok-banner">No auto-reject language on the page. Punchy because of the rails, not despite them.</div>
-          ) : (
-            hits.map((h, i) => (
-              <div key={`${h.phrase}-${i}`} className={`hit ${h.severity}`}>
-                <div className="phrase">{h.severity === "block" ? "Never say" : "Check"} · {h.phrase}</div>
-                <div className="instead">Say instead: {h.instead}</div>
-              </div>
-            ))
-          )}
-          <h2 style={{ marginTop: 22 }}>Approved stats</h2>
-          <ul className="kit">
-            {SUPERPOWER_STATS.map((s) => (
-              <li key={s}>{s}</li>
+          <button className="rail-btn" onClick={() => void fixNow()}>
+            Fix last line
+          </button>
+          <button className="rail-btn" onClick={() => void enhanceNow()}>
+            Enhance last paragraph
+          </button>
+          <h2 style={{ marginTop: 28 }}>Type size</h2>
+          <div className="toggles" style={{ padding: 0 }}>
+            {(["auto", "sm", "md", "lg"] as TypeScale[]).map((scale) => (
+              <button
+                key={scale}
+                className={settings.typeScale === scale ? "active" : ""}
+                onClick={() => void patchSettings({ typeScale: scale })}
+              >
+                {scale}
+              </button>
             ))}
-          </ul>
-          <h2 style={{ marginTop: 18 }}>Anchors</h2>
-          <ul className="kit">
-            {SUPERPOWER_ANCHORS.map((s) => (
-              <li key={s}>{s}</li>
-            ))}
-          </ul>
+          </div>
+          <p className="kit" style={{ paddingLeft: 0, marginTop: 12 }}>
+            Auto sizes the page to the window. Bold, italic, underline, headings, and local sizes live on the bar above the paper. Ctrl/Cmd B I U.
+          </p>
         </aside>
       </div>
 
@@ -523,7 +622,7 @@ export default function App() {
           <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
             <h3>Every model. Your keys. Local only.</h3>
             <p className="lead">
-              Nothing leaves this machine except the request you send to the provider you pick. Ollama Cloud uses an API key from ollama.com/settings/keys. Local Ollama needs no key — if you have signed in with <code>ollama signin</code>, <code>*-cloud</code> models work through localhost too.
+              Nothing leaves this machine except the request you send to the provider you pick. Ollama Cloud uses an API key from ollama.com/settings/keys. Local Ollama needs no key.
             </p>
             {PROVIDERS.map((p) =>
               p.id === "ollama" ? (
@@ -556,7 +655,7 @@ export default function App() {
             </div>
             <div className="toggles">
               <button className={settings.autoCorrect ? "active" : ""} onClick={() => void patchSettings({ autoCorrect: !settings.autoCorrect })}>
-                Auto-correct {settings.autoCorrect ? "on" : "off"}
+                Auto-fix {settings.autoCorrect ? "on" : "off"}
               </button>
               {isOllamaProvider(settings.provider) && (
                 <button onClick={() => void syncOllama(settings)}>Sync Ollama models</button>

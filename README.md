@@ -2,17 +2,24 @@
 
 A desktop writing studio that stays in the sentence with you.
 
-Ghost-text **Flow** finishes the line when you pause. **Tab** keeps it. **⌘K** drops a prompt on the page. Superpower **Guard** flags the language that gets a health brand auto-rejected. One click exports **Word**.
+You type messy. **Flow** waits for the pause, fixes the line, lifts it, then ghosts the next words. **Tab** keeps them. **⌘K** drops a prompt on the page. Bold, italic, underline, headings, and type size sit on the bar. One click exports **Word**.
 
 Bring your own keys. OpenAI, Anthropic, Gemini, Groq, xAI, Mistral, DeepSeek, OpenRouter, Together, Fireworks, Perplexity, Cohere, **Ollama local**, **Ollama Cloud**, and any OpenAI-compatible endpoint. Keys live in local Tauri store. Not our servers — there are no servers.
 
+## Flow
+
+- **Enhance** (default) — pause, then the last line is fixed and sharpened in place. Ghost text continues the thought.
+- **Write** — pause, then typos get cleaned. Ghost text continues in your voice.
+- **Off** — no ghost. Auto-fix can still clean the last line.
+- **Fix last line** / **Enhance last paragraph** — run it now, no waiting.
+
+Type bar: **B I U**, H1 / H2 / Body, Auto / S / M / L / XL / Title. Auto sizes the page to the window.
+
 ## Ollama
 
-Two integrations, same native `/api/chat` stream:
+**Local.** Point at `http://127.0.0.1:11434`. No key. `Sync` pulls whatever you have pulled. If you ran `ollama signin`, models tagged `-cloud` offload through that signed-in local daemon.
 
-**Local.** Point at `http://127.0.0.1:11434` (or your LAN host). No key. `Sync` pulls whatever you have pulled. If you ran `ollama signin`, models tagged `-cloud` (example: `gpt-oss:120b-cloud`) offload through that signed-in local daemon.
-
-**Cloud.** Key from [ollama.com/settings/keys](https://ollama.com/settings/keys). Talks to `https://ollama.com` directly — no local daemon. `Sync` lists the live cloud catalog. Type any model id in the picker (`gpt-oss:120b`, `kimi-k2.6`, `minimax-m3`, …).
+**Cloud.** Key from [ollama.com/settings/keys](https://ollama.com/settings/keys). Talks to `https://ollama.com` directly. The model dropdown ships the full cloud catalog. `Sync` refreshes it live; a key is only required to write.
 
 ## Run it
 
@@ -22,8 +29,6 @@ npm run tauri dev
 ```
 
 Add a provider key under **Keys**. Flow needs a model.
-
-Ollama local needs `ollama serve` running. Ollama Cloud needs a key; no local GPU.
 
 ## Build
 
@@ -35,22 +40,12 @@ Installers land in `src-tauri/target/release/bundle/`.
 
 ## Releases
 
-Push a tag:
-
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
-GitHub Actions builds Windows, macOS (Intel + Apple Silicon), and Linux via `tauri-apps/tauri-action`.
-
-## Superpower assessment
-
-Printable leave-behind (File → Print → Save as PDF, sharing set to anyone with the link if you paste into Docs):
-
-`assessment/Aaron-Grace-Superpower-Copywriter-Assessment.html`
-
-The same piece is the starter document inside the app, with Guard on.
+GitHub Actions builds Windows, macOS (Intel + Apple Silicon), and Linux.
 
 ## Shortcuts
 
@@ -58,7 +53,8 @@ The same piece is the starter document inside the app, with Guard on.
 | --- | --- |
 | Tab | Accept Flow ghost text |
 | Esc | Dismiss ghost / overlays |
+| ⌘/Ctrl B I U | Bold / italic / underline |
 | ⌘/Ctrl K | Prompt bar |
-| ⌘/Ctrl E | Tighten selection |
+| ⌘/Ctrl E | Enhance selection |
 | ⌘/Ctrl S | Save |
 | ⌘/Ctrl P | Export Word |

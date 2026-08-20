@@ -88,12 +88,44 @@ button { cursor: pointer; }
   border-radius: 999px;
   font-size: 12px;
 }
-.center-controls select { max-width: 240px; }
-.center-controls input.model { width: 200px; }
+.center-controls select { max-width: 280px; }
+.center-controls select.model { width: 260px; max-width: 320px; }
+
+.typebar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: 10px 28px 0;
+  padding: 4px;
+  background: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  width: fit-content;
+  max-width: calc(100% - 56px);
+}
+.typebar button {
+  background: transparent;
+  border: 0;
+  color: #e8e0d4;
+  min-width: 28px;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.typebar button.active, .typebar button:hover { background: var(--ink-3); color: var(--gold); }
+.type-gap {
+  width: 1px;
+  height: 14px;
+  background: var(--line);
+  margin: 0 4px;
+}
 
 .workspace {
   display: grid;
-  grid-template-columns: 240px 1fr 300px;
+  grid-template-columns: 220px 1fr 260px;
   min-height: 0;
 }
 
@@ -142,32 +174,37 @@ button { cursor: pointer; }
 }
 .paper {
   flex: 1;
-  margin: 18px 28px 12px;
+  margin: 12px 28px 12px;
   background: var(--paper);
   color: var(--paper-ink);
   border-radius: 2px;
   box-shadow: 0 30px 80px rgba(0,0,0,0.45);
   overflow: auto;
   user-select: text;
+  --body-size: 20px;
 }
+.paper.scale-sm { --body-size: 17px; }
+.paper.scale-md { --body-size: 20px; }
+.paper.scale-lg { --body-size: 24px; }
 .paper .tiptap {
   min-height: 100%;
   padding: 56px 72px 96px;
   outline: none;
   font-family: var(--serif);
-  font-size: 20px;
+  font-size: var(--body-size);
   line-height: 1.55;
 }
-.tiptap h1 { font-size: 42px; line-height: 1.15; font-weight: 600; margin: 0 0 18px; }
-.tiptap h2 { font-size: 26px; margin: 32px 0 10px; font-weight: 600; }
+.tiptap h1 { font-size: calc(var(--body-size) * 2.15); line-height: 1.15; font-weight: 600; margin: 0 0 18px; }
+.tiptap h2 { font-size: calc(var(--body-size) * 1.35); margin: 32px 0 10px; font-weight: 600; }
 .tiptap h3 {
-  font-size: 15px;
+  font-size: calc(var(--body-size) * 0.78);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   margin: 28px 0 8px;
   font-family: var(--sans);
 }
 .tiptap p { margin: 0 0 0.85em; }
+.tiptap strong { font-weight: 700; }
 .tiptap ul, .tiptap ol { padding-left: 1.2em; }
 .tiptap blockquote {
   margin: 1em 0;

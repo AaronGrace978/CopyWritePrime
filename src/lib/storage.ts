@@ -1,5 +1,5 @@
 import { Store } from "@tauri-apps/plugin-store";
-import { DEFAULT_SETTINGS, type Settings } from "./llm";
+import { DEFAULT_SETTINGS, normalizeFlow, normalizeTypeScale, type Settings } from "./llm";
 import type { ProviderId } from "./providers";
 
 export interface DocRecord {
@@ -41,6 +41,9 @@ export async function loadSettings(): Promise<Settings> {
     ...saved,
     keys: { ...DEFAULT_SETTINGS.keys, ...saved.keys },
     ollamaLocalHost: saved.ollamaLocalHost || DEFAULT_SETTINGS.ollamaLocalHost,
+    flow: normalizeFlow(saved.flow),
+    typeScale: normalizeTypeScale((saved as Settings & { typeScale?: unknown }).typeScale),
+    autoCorrect: saved.autoCorrect !== false,
   };
 }
 

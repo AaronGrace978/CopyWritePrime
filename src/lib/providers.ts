@@ -1,3 +1,5 @@
+import { OLLAMA_CLOUD_MODELS, OLLAMA_LOCAL_MODELS } from "./ollamaCatalog";
+
 export type ProviderId =
   | "openai"
   | "anthropic"
@@ -186,16 +188,7 @@ export const PROVIDERS: ProviderDef[] = [
     baseUrl: "http://127.0.0.1:11434",
     keyLabel: "Local host (no key)",
     placeholder: "http://127.0.0.1:11434",
-    models: [
-      "llama3.2",
-      "llama3.1",
-      "mistral",
-      "qwen2.5",
-      "phi4",
-      "gpt-oss:120b-cloud",
-      "kimi-k2.6-cloud",
-      "minimax-m3-cloud",
-    ],
+    models: [...OLLAMA_LOCAL_MODELS],
     docs: "https://docs.ollama.com/cloud",
   },
   {
@@ -205,19 +198,7 @@ export const PROVIDERS: ProviderDef[] = [
     baseUrl: "https://ollama.com",
     keyLabel: "Ollama Cloud API key",
     placeholder: "ollama_...",
-    models: [
-      "gpt-oss:120b",
-      "gpt-oss:20b",
-      "kimi-k2.6",
-      "kimi-k2.7-code",
-      "minimax-m2.7",
-      "minimax-m3",
-      "glm-5.2",
-      "qwen3.5:397b",
-      "gemma4:31b",
-      "deepseek-v4-flash",
-      "mistral-large-3:675b",
-    ],
+    models: [...OLLAMA_CLOUD_MODELS],
     docs: "https://ollama.com/settings/keys",
   },
   {
