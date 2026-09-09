@@ -50,6 +50,7 @@ import {
 } from "./lib/prose";
 import { PROVIDERS, type ProviderId } from "./lib/providers";
 import { isOllamaProvider, listOllamaModels } from "./lib/ollama";
+import { isFailedWorkshopTurn, withoutFailedTail, workshopHistory } from "./lib/workshop";
 import {
   briefWordCount,
   extractPaper,
@@ -210,6 +211,8 @@ export default function App() {
   const lastFixedRef = useRef("");
   const briefRef = useRef("");
   const workshopBusyRef = useRef(false);
+  const workshopRef = useRef<WorkshopTurn[] | undefined>(undefined);
+  const railTabRef = useRef<"flow" | "workshop" | "voice">("flow");
   const busyRef = useRef(false);
   const listenGenRef = useRef(0);
   const paperRef = useRef<HTMLDivElement>(null);
@@ -217,6 +220,7 @@ export default function App() {
   const onPauseRef = useRef<() => Promise<void>>(async () => undefined);
   const placeSelbarRef = useRef<(ed: Editor) => void>(() => undefined);
   settingsRef.current = settings;
+  railTabRef.current = railTab;
 
   placeSelbarRef.current = (ed: Editor) => {
     const { from, to } = ed.state.selection;
@@ -261,7 +265,7 @@ export default function App() {
       if (flowTimer.current) window.clearTimeout(flowTimer.current);
       ed.commands.clearFlowGhost();
       flowAbortRef.current?.abort();
-      if (workshopBusyRef.current || busyRef.current) return;
+      if (workshopBusyRef.current || busyRef.current || railTabRef.current === "workshop") return;
       flowTimer.current = window.setTimeout(() => void onPauseRef.current(), 850);
     },
     onSelectionUpdate: ({ editor: ed }) => {
@@ -289,6 +293,7 @@ export default function App() {
       const savedActive = await loadActiveId();
       const current = existing.find((d) => d.id === savedActive) ?? existing[0];
       setActiveId(current.id);
+      workshopRef.current = current.workshop;
       setScanName(current.brief?.name ?? "");
       setScanText(current.brief?.text ?? "");
       editor?.commands.setContent(current.html, { emitUpdate: false });
@@ -344,6 +349,7 @@ export default function App() {
             html: editor.getHTML(),
             title: titleFromHtml(editor.getHTML(), d.title),
             updatedAt: Date.now(),
+            workshop: workshopRef.current,
           }
         : d,
     );
@@ -376,7 +382,7 @@ export default function App() {
 
   async function onPause() {
     const s = settingsRef.current;
-    if (!editor || !hasKey(s) || busyRef.current || workshopBusyRef.current) return;
+    if (!editor || !hasKey(s) || busyRef.current || workshopBusyRef.current || railTabRef.current === "workshop") return;
     const gen = ++flowGenRef.current;
     flowAbortRef.current?.abort();
     const ac = new AbortController();
@@ -536,6 +542,7 @@ export default function App() {
     if (!doc || !editor) return;
     void persist(next, id);
     setActiveId(id);
+    workshopRef.current = doc.workshop;
     lastFixedRef.current = "";
     setScanName(doc.brief?.name ?? "");
     setScanText(doc.brief?.text ?? "");
@@ -548,6 +555,7 @@ export default function App() {
     const doc: DocRecord = { id: newId(), title: "Untitled", html: "<p></p>", updatedAt: Date.now() };
     void persist([doc, ...nextDocs], doc.id);
     setActiveId(doc.id);
+    workshopRef.current = undefined;
     lastFixedRef.current = "";
     setScanName("");
     setScanText("");
@@ -557,6 +565,7 @@ export default function App() {
 
   function showPage(doc: DocRecord) {
     setActiveId(doc.id);
+    workshopRef.current = doc.workshop;
     lastFixedRef.current = "";
     setScanName(doc.brief?.name ?? "");
     setScanText(doc.brief?.text ?? "");
@@ -571,6 +580,7 @@ export default function App() {
     setScanName("");
     setScanText("");
     setLiveWorkshop(null);
+    workshopRef.current = undefined;
     briefRef.current = "";
     editor.commands.setContent("<p></p>", { emitUpdate: false });
     const next = snapshot().map((d) =>
@@ -637,21 +647,16 @@ export default function App() {
   }
 
   function setWorkshop(turns: WorkshopTurn[]) {
-    const next = snapshot().map((d) => (d.id === activeId ? { ...d, workshop: turns, updatedAt: Date.now() } : d));
-    void persist(next);
+    workshopRef.current = turns;
+    void persist(snapshot());
   }
 
   function openWorkshop() {
     setRailTab("workshop");
+    flowAbortRef.current?.abort();
+    if (flowTimer.current) window.clearTimeout(flowTimer.current);
+    editor?.commands.clearFlowGhost();
     window.setTimeout(() => workshopFieldRef.current?.focus(), 40);
-  }
-
-  /** Drop a trailing failed reply and the question that caused it, so a retry replaces the pair. */
-  function withoutFailedTail(turns: WorkshopTurn[]) {
-    const last = turns[turns.length - 1];
-    if (!last || last.role !== "assistant" || !last.failed) return turns;
-    const cut = turns.length >= 2 && turns[turns.length - 2].role === "user" ? 2 : 1;
-    return turns.slice(0, -cut);
   }
 
   async function runWorkshop(question?: string, opts: { retry?: boolean } = {}) {
@@ -663,11 +668,10 @@ export default function App() {
       setError("Add a model key to workshop.");
       return;
     }
-    let prior = (snapshot().find((d) => d.id === activeId)?.workshop ?? []).slice();
+    let prior = (workshopRef.current ?? snapshot().find((d) => d.id === activeId)?.workshop ?? []).slice();
     if (opts.retry) prior = withoutFailedTail(prior);
     const userTurn: WorkshopTurn = { role: "user", content: q };
-    // Failed turns stay in the log for the user, but never go back to the model as context.
-    const history = prior.filter((t) => !t.failed);
+    const history = workshopHistory(prior);
     setLiveWorkshop([...prior, userTurn, { role: "assistant", content: "" }]);
     setWorkshopInput("");
     workshopBusyRef.current = true;
@@ -685,9 +689,15 @@ export default function App() {
     jobAbortRef.current = ac;
     let acc = "";
     let thoughtChars = 0;
+    let paintScheduled = false;
     const paint = () => {
-      if (job !== jobGenRef.current) return;
-      setLiveWorkshop([...prior, userTurn, { role: "assistant", content: killEmDashes(acc) }]);
+      if (job !== jobGenRef.current || paintScheduled) return;
+      paintScheduled = true;
+      requestAnimationFrame(() => {
+        paintScheduled = false;
+        if (job !== jobGenRef.current) return;
+        setLiveWorkshop([...prior, userTurn, { role: "assistant", content: killEmDashes(acc) }]);
+      });
     };
     const finish = (turn: WorkshopTurn, note: string) => {
       setWorkshop([...prior, userTurn, turn]);
@@ -763,9 +773,9 @@ export default function App() {
   }
 
   function retryWorkshop() {
-    const turns = activeDoc?.workshop ?? [];
+    const turns = workshopRef.current ?? activeDoc?.workshop ?? [];
     const last = turns[turns.length - 1];
-    const asked = last?.role === "assistant" && last.failed ? turns[turns.length - 2] : undefined;
+    const asked = last?.role === "assistant" && isFailedWorkshopTurn(last) ? turns[turns.length - 2] : undefined;
     if (!asked || asked.role !== "user") return;
     void runWorkshop(asked.content, { retry: true });
   }
@@ -891,6 +901,7 @@ export default function App() {
     jobAbortRef.current?.abort();
     setLiveWorkshop(null);
     const next = snapshot().map((d) => ({ ...d, workshop: undefined, updatedAt: Date.now() }));
+    workshopRef.current = undefined;
     void persist(next);
     setLogsOpen(false);
     setStatus("All Workshop logs deleted.");
@@ -1459,7 +1470,7 @@ export default function App() {
                   const last = i === all.length - 1;
                   const waiting = workshopBusy && turn.role === "assistant" && last && !turn.content.trim();
                   return (
-                    <div key={`${turn.role}-${i}`} className={`workshop-turn ${turn.role}${turn.failed ? " failed" : ""}`}>
+                    <div key={`${turn.role}-${i}`} className={`workshop-turn ${turn.role}${isFailedWorkshopTurn(turn) ? " failed" : ""}`}>
                       <span className="label">{turn.role === "user" ? "You" : "Workshop"}</span>
                       <p>
                         {turn.content}
@@ -1476,14 +1487,14 @@ export default function App() {
                             : `Still waiting on ${settings.model}. It gives up on its own after ~75s of silence. Stop, or try a faster model.`}
                         </p>
                       )}
-                      {turn.role === "assistant" && turn.failed && last && !workshopBusy && (
+                      {turn.role === "assistant" && isFailedWorkshopTurn(turn) && last && !workshopBusy && (
                         <div className="turn-actions">
                           <button className="rail-btn" onClick={retryWorkshop}>
                             Try again
                           </button>
                         </div>
                       )}
-                      {turn.role === "assistant" && !turn.failed && turn.content.trim() && (
+                      {turn.role === "assistant" && !isFailedWorkshopTurn(turn) && turn.content.trim() && (
                         <div className="turn-actions">
                           <button className="rail-btn" onClick={() => insertWorkshop(turn.content)}>
                             Drop on page
