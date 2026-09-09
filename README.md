@@ -1,10 +1,54 @@
-# CopyWritePrime
+<p align="center">
+  <img src="app-icon.png" width="88" alt="CopyWritePrime" />
+</p>
 
-A desktop writing studio that stays in the sentence with you.
+<h1 align="center">CopyWritePrime</h1>
 
-You type messy. **Flow** waits for the pause, fixes the line, lifts it, then ghosts the next words. **Tab** keeps them. **⌘K** drops a prompt on the page. **Scan** a paper — PDF, Word, or paste — and **Complete** writes the submission onto the page. **Workshop** argues the line without moving the page, and it can read what’s already written. **Voice** scans a folder of past work and writes like that person. **Logs** exports or deletes chats. Gold on the page is AI. **Clear & archive** files a finished page. One click exports **Word**: Times New Roman 12, double-spaced, 1-inch margins. Em dashes are stripped on the way out.
+<p align="center">
+  A desktop writing studio that stays in the sentence with you.
+</p>
 
-Bring your own keys. OpenAI, Anthropic, Gemini, Groq, xAI, Mistral, DeepSeek, OpenRouter, Together, Fireworks, Perplexity, Cohere, **Ollama local**, **Ollama Cloud**, and any OpenAI-compatible endpoint. Keys live in local Tauri store. Not our servers — there are no servers.
+<p align="center">
+  <a href="https://github.com/AaronGrace978/CopyWritePrime/releases/latest"><img src="https://img.shields.io/github/v/release/AaronGrace978/CopyWritePrime?style=for-the-badge&color=c4a574&labelColor=12110e" alt="Release" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-c4a574?style=for-the-badge&labelColor=12110e" alt="MIT" /></a>
+  <img src="https://img.shields.io/badge/Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Windows" />
+  <img src="https://img.shields.io/badge/macOS-000000?style=for-the-badge&logo=apple&logoColor=white" alt="macOS" />
+  <img src="https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black" alt="Linux" />
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=black" alt="React" />
+  <img src="https://img.shields.io/badge/Vite-7-646CFF?style=for-the-badge&logo=vite&logoColor=white" alt="Vite" />
+  <img src="https://img.shields.io/badge/Tauri-2-FFC131?style=for-the-badge&logo=tauri&logoColor=black" alt="Tauri" />
+  <img src="https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white" alt="Rust" />
+  <img src="https://img.shields.io/badge/TipTap-3-000000?style=for-the-badge" alt="TipTap" />
+  <img src="https://img.shields.io/badge/Kokoro-TTS-e07a5f?style=for-the-badge" alt="Kokoro" />
+</p>
+
+You type messy. **Flow** waits for the pause, fixes the line, lifts it, then ghosts the next words. **Tab** keeps them. **⌘K** drops a prompt on the page. **Scan** a paper — PDF, Word, or paste — and **Complete** writes the submission onto the page. **Workshop** argues the line without moving the page. **Voice** scans a folder of past work and writes like that person. **Listen** reads the page with Kokoro. **Logs** exports or deletes chats. Gold on the page is AI. One click exports **Word**: Times New Roman 12, double-spaced, 1-inch margins. Em dashes are stripped on the way out.
+
+Bring your own keys. OpenAI, Anthropic, Gemini, Groq, xAI, Mistral, DeepSeek, OpenRouter, Together, Fireworks, Perplexity, Cohere, **Ollama local**, **Ollama Cloud**, and any OpenAI-compatible endpoint. Keys live in the local Tauri store. Not our servers — there are no servers.
+
+## Built with
+
+| | |
+| --- | --- |
+| App shell | [Tauri 2](https://v2.tauri.app/) + [Rust](https://www.rust-lang.org/) |
+| UI | [React 19](https://react.dev/) + [TypeScript](https://www.typescriptlang.org/) + [Vite 7](https://vite.dev/) |
+| Editor | [TipTap](https://tiptap.dev/) / ProseMirror |
+| Speech | [Kokoro](https://github.com/hexgrad/kokoro) via `kokoro-js` |
+| Papers | PDF.js, Mammoth, `docx` |
+| Models | Your keys. OpenAI-compatible, Anthropic, Gemini, Cohere, Ollama |
+
+<p>
+  <img src="https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/JavaScript-F7DF1E?logo=javascript&logoColor=black" alt="JavaScript" />
+  <img src="https://img.shields.io/badge/Rust-000000?logo=rust&logoColor=white" alt="Rust" />
+  <img src="https://img.shields.io/badge/CSS-1572B6?logo=css3&logoColor=white" alt="CSS" />
+  <img src="https://img.shields.io/badge/HTML-E34F26?logo=html5&logoColor=white" alt="HTML" />
+  <img src="https://img.shields.io/badge/JSON-000000?logo=json&logoColor=white" alt="JSON" />
+</p>
 
 ## Flow
 
@@ -74,7 +118,7 @@ git tag v0.6.0
 git push origin v0.6.0
 ```
 
-GitHub Actions builds Windows, macOS (Intel + Apple Silicon), and Linux.
+GitHub Actions builds Windows, macOS (Intel + Apple Silicon), and Linux. Latest: [v0.6.0](https://github.com/AaronGrace978/CopyWritePrime/releases/tag/v0.6.0).
 
 ## Shortcuts
 
@@ -82,7 +126,7 @@ GitHub Actions builds Windows, macOS (Intel + Apple Silicon), and Linux.
 | --- | --- |
 | Tab | Accept Flow ghost text |
 | Triple-click / Alt+click | Select the sentence |
-| Esc | Dismiss ghost / overlays |
+| Esc | Dismiss ghost / overlays / stop Kokoro |
 | ⌘/Ctrl B I U | Bold / italic / underline |
 | HL / AI | Highlighter / show AI gold |
 | ⌘/Ctrl J | Open Workshop |
