@@ -116,11 +116,11 @@ Installers land in `src-tauri/target/release/bundle/`.
 ## Releases
 
 ```bash
-git tag v0.6.1
-git push origin v0.6.1
+git tag v0.6.2
+git push origin v0.6.2
 ```
 
-GitHub Actions builds Windows, macOS (Intel + Apple Silicon), and Linux. Latest: [v0.6.1](https://github.com/AaronGrace978/CopyWritePrime/releases/tag/v0.6.1).
+GitHub Actions builds Windows, macOS (Intel + Apple Silicon), and Linux. Latest: [v0.6.2](https://github.com/AaronGrace978/CopyWritePrime/releases/tag/v0.6.2).
 
 ## Shortcuts
 
