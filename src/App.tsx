@@ -190,6 +190,9 @@ export default function App() {
   const [railTab, setRailTab] = useState<"flow" | "workshop" | "voice">("flow");
   const [workshopInput, setWorkshopInput] = useState("");
   const [workshopBusy, setWorkshopBusy] = useState(false);
+  const [workshopPhase, setWorkshopPhase] = useState<"waiting" | "thinking" | "writing">("waiting");
+  const [workshopStarted, setWorkshopStarted] = useState(0);
+  const [tick, setTick] = useState(0);
   const [liveWorkshop, setLiveWorkshop] = useState<WorkshopTurn[] | null>(null);
   const [logsOpen, setLogsOpen] = useState(false);
   const [voiceBusy, setVoiceBusy] = useState(false);
@@ -352,6 +355,17 @@ export default function App() {
   useEffect(() => {
     workshopEndRef.current?.scrollIntoView({ block: "end" });
   }, [liveWorkshop, activeDoc?.workshop]);
+
+  useEffect(() => {
+    if (!workshopBusy) return;
+    setTick(Date.now());
+    const t = window.setInterval(() => setTick(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, [workshopBusy]);
+
+  const workshopElapsed = workshopBusy && workshopStarted ? Math.max(0, Math.floor((tick - workshopStarted) / 1000)) : 0;
+  const workshopWaitLabel =
+    workshopPhase === "thinking" ? "Thinking" : workshopPhase === "writing" ? "Writing" : "Listening";
 
   useEffect(() => {
     const t = window.setInterval(() => {
@@ -632,7 +646,15 @@ export default function App() {
     window.setTimeout(() => workshopFieldRef.current?.focus(), 40);
   }
 
-  async function runWorkshop(question?: string) {
+  /** Drop a trailing failed reply and the question that caused it, so a retry replaces the pair. */
+  function withoutFailedTail(turns: WorkshopTurn[]) {
+    const last = turns[turns.length - 1];
+    if (!last || last.role !== "assistant" || !last.failed) return turns;
+    const cut = turns.length >= 2 && turns[turns.length - 2].role === "user" ? 2 : 1;
+    return turns.slice(0, -cut);
+  }
+
+  async function runWorkshop(question?: string, opts: { retry?: boolean } = {}) {
     const q = (question ?? workshopInput).trim();
     if (!q || !editor) return;
     const s = settingsRef.current;
@@ -641,15 +663,20 @@ export default function App() {
       setError("Add a model key to workshop.");
       return;
     }
-    const prior = (snapshot().find((d) => d.id === activeId)?.workshop ?? []).slice();
+    let prior = (snapshot().find((d) => d.id === activeId)?.workshop ?? []).slice();
+    if (opts.retry) prior = withoutFailedTail(prior);
     const userTurn: WorkshopTurn = { role: "user", content: q };
+    // Failed turns stay in the log for the user, but never go back to the model as context.
+    const history = prior.filter((t) => !t.failed);
     setLiveWorkshop([...prior, userTurn, { role: "assistant", content: "" }]);
     setWorkshopInput("");
     workshopBusyRef.current = true;
     setWorkshopBusy(true);
+    setWorkshopPhase("waiting");
+    setWorkshopStarted(Date.now());
     setRailTab("workshop");
     setError("");
-    setStatus("Workshop is on the line…");
+    setStatus(`Workshop is on the line with ${s.model}…`);
     flowAbortRef.current?.abort();
     if (flowTimer.current) window.clearTimeout(flowTimer.current);
     const job = ++jobGenRef.current;
@@ -657,59 +684,90 @@ export default function App() {
     const ac = new AbortController();
     jobAbortRef.current = ac;
     let acc = "";
+    let thoughtChars = 0;
     const paint = () => {
       if (job !== jobGenRef.current) return;
       setLiveWorkshop([...prior, userTurn, { role: "assistant", content: killEmDashes(acc) }]);
     };
-    const ask = () =>
-      workshopChat(
+    const finish = (turn: WorkshopTurn, note: string) => {
+      setWorkshop([...prior, userTurn, turn]);
+      setLiveWorkshop(null);
+      setStatus(note);
+    };
+    try {
+      await workshopChat(
         s,
         {
           page: pagePlain(editor),
           selection: sel?.text ?? "",
           brief: briefRef.current,
-          history: prior,
+          history,
           question: q,
+          onThinking: (chunk) => {
+            if (job !== jobGenRef.current) return;
+            thoughtChars += chunk.length;
+            if (thoughtChars === chunk.length) {
+              setWorkshopPhase("thinking");
+              setStatus(
+                s.reasoning
+                  ? `${s.model} is thinking before it writes. Reasoning is on under Keys.`
+                  : `${s.model} is thinking before it writes. Stop any time, or pick a model that skips the trace.`,
+              );
+            }
+          },
         },
         (chunk) => {
           if (job !== jobGenRef.current) return;
+          if (!acc) setWorkshopPhase("writing");
           acc += chunk;
           paint();
         },
         ac.signal,
       );
-    try {
-      await ask();
       if (job !== jobGenRef.current) return;
-      if (!acc.trim() && !ac.signal.aborted) {
-        acc = "";
-        await ask();
+      const text = killEmDashes(acc).trim();
+      if (!text) {
+        finish(
+          {
+            role: "assistant",
+            content: `Nothing came back from ${s.model}. Try again, or pick a faster model under the model menu.`,
+            failed: true,
+          },
+          "Workshop got an empty reply.",
+        );
+        return;
       }
-      if (job !== jobGenRef.current) return;
-      const text = killEmDashes(acc).trim() || "Nothing came back. Ask again.";
-      setWorkshop([...prior, userTurn, { role: "assistant", content: text }]);
-      setLiveWorkshop(null);
-      setStatus("Workshop answered. The page didn't move.");
+      finish({ role: "assistant", content: text }, "Workshop answered. The page didn't move.");
     } catch (e) {
       if (job !== jobGenRef.current) return;
       if (isAbortError(e)) {
         const partial = killEmDashes(acc).trim();
-        setWorkshop([...prior, userTurn, { role: "assistant", content: partial || "(stopped before a reply.)" }]);
-        setLiveWorkshop(null);
-        setStatus("Workshop stopped.");
+        finish(
+          partial
+            ? { role: "assistant", content: partial }
+            : { role: "assistant", content: "(stopped before a reply.)", failed: true },
+          "Workshop stopped.",
+        );
         return;
       }
       const msg = e instanceof Error ? e.message : String(e);
-      setWorkshop([...prior, userTurn, { role: "assistant", content: `Couldn't answer. ${msg}` }]);
-      setLiveWorkshop(null);
+      finish({ role: "assistant", content: `Couldn't answer. ${msg}`, failed: true }, "Workshop paused.");
       setError(msg);
-      setStatus("Workshop paused.");
     } finally {
       if (job === jobGenRef.current) {
         workshopBusyRef.current = false;
         setWorkshopBusy(false);
+        setWorkshopPhase("waiting");
       }
     }
+  }
+
+  function retryWorkshop() {
+    const turns = activeDoc?.workshop ?? [];
+    const last = turns[turns.length - 1];
+    const asked = last?.role === "assistant" && last.failed ? turns[turns.length - 2] : undefined;
+    if (!asked || asked.role !== "user") return;
+    void runWorkshop(asked.content, { retry: true });
   }
 
   function stopWorkshop() {
@@ -1397,27 +1455,47 @@ export default function App() {
                     <p>Typing on the page no longer kills the reply.</p>
                   </div>
                 )}
-                {((liveWorkshop ?? activeDoc?.workshop) ?? []).map((turn, i, all) => (
-                  <div key={`${turn.role}-${i}`} className={`workshop-turn ${turn.role}`}>
-                    <span className="label">{turn.role === "user" ? "You" : "Workshop"}</span>
-                    <p>
-                      {turn.content}
-                      {workshopBusy && turn.role === "assistant" && i === all.length - 1 && !turn.content.trim() ? (
-                        <span className="pulse">Listening…</span>
-                      ) : null}
-                    </p>
-                    {turn.role === "assistant" && turn.content.trim() && (
-                      <div className="turn-actions">
-                        <button className="rail-btn" onClick={() => insertWorkshop(turn.content)}>
-                          Drop on page
-                        </button>
-                        <button className="rail-btn" onClick={() => copyTurn(turn.content)}>
-                          Copy
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ))}
+                {((liveWorkshop ?? activeDoc?.workshop) ?? []).map((turn, i, all) => {
+                  const last = i === all.length - 1;
+                  const waiting = workshopBusy && turn.role === "assistant" && last && !turn.content.trim();
+                  return (
+                    <div key={`${turn.role}-${i}`} className={`workshop-turn ${turn.role}${turn.failed ? " failed" : ""}`}>
+                      <span className="label">{turn.role === "user" ? "You" : "Workshop"}</span>
+                      <p>
+                        {turn.content}
+                        {waiting ? (
+                          <span className="pulse">
+                            {workshopWaitLabel}… {workshopElapsed}s
+                          </span>
+                        ) : null}
+                      </p>
+                      {waiting && workshopElapsed >= 20 && (
+                        <p className="kit slow-note">
+                          {workshopPhase === "thinking"
+                            ? `${settings.model} is still reasoning. Stop, or turn Reasoning off under Keys for a straight answer.`
+                            : `Still waiting on ${settings.model}. It gives up on its own after ~75s of silence. Stop, or try a faster model.`}
+                        </p>
+                      )}
+                      {turn.role === "assistant" && turn.failed && last && !workshopBusy && (
+                        <div className="turn-actions">
+                          <button className="rail-btn" onClick={retryWorkshop}>
+                            Try again
+                          </button>
+                        </div>
+                      )}
+                      {turn.role === "assistant" && !turn.failed && turn.content.trim() && (
+                        <div className="turn-actions">
+                          <button className="rail-btn" onClick={() => insertWorkshop(turn.content)}>
+                            Drop on page
+                          </button>
+                          <button className="rail-btn" onClick={() => copyTurn(turn.content)}>
+                            Copy
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
                 <div ref={workshopEndRef} />
               </div>
               <textarea
@@ -1522,7 +1600,15 @@ export default function App() {
             <button className={settings.autoCorrect ? "active" : ""} onClick={() => void patchSettings({ autoCorrect: !settings.autoCorrect })}>
               Auto-fix {settings.autoCorrect ? "on" : "off"}
             </button>
+            <button className={settings.reasoning ? "active" : ""} onClick={() => void patchSettings({ reasoning: !settings.reasoning })}>
+              Reasoning {settings.reasoning ? "on" : "off"}
+            </button>
           </div>
+          <p className="kit" style={{ paddingLeft: 0 }}>
+            {settings.reasoning
+              ? "Reasoning on: thinking models plan first. Slower. The trace eats into the reply budget."
+              : "Reasoning off: thinking models answer straight away. Right for Flow and Workshop."}
+          </p>
           <button className="rail-btn" onClick={() => void fixNow()}>
             Fix last line
           </button>
@@ -1697,10 +1783,17 @@ export default function App() {
               <button className={settings.autoCorrect ? "active" : ""} onClick={() => void patchSettings({ autoCorrect: !settings.autoCorrect })}>
                 Auto-fix {settings.autoCorrect ? "on" : "off"}
               </button>
+              <button className={settings.reasoning ? "active" : ""} onClick={() => void patchSettings({ reasoning: !settings.reasoning })}>
+                Reasoning {settings.reasoning ? "on" : "off"}
+              </button>
               {isOllamaProvider(settings.provider) && (
                 <button onClick={() => void syncOllama(settings)}>Sync Ollama models</button>
               )}
             </div>
+            <p className="lead" style={{ marginTop: 10 }}>
+              Reasoning off asks thinking models (GLM, Qwen 3, DeepSeek, gpt-oss on Ollama) to answer straight away. On lets them
+              think first: slower, and the trace eats into the reply budget. Off is right for Flow and Workshop.
+            </p>
           </div>
         </div>
       )}

@@ -482,6 +482,14 @@ button { cursor: pointer; }
   user-select: text;
 }
 .workshop-turn.user p { color: var(--gold-2); }
+.workshop-turn.failed p { color: var(--muted); font-style: italic; }
+.workshop-turn .slow-note {
+  padding-left: 0;
+  margin-top: 6px;
+  font-style: normal;
+  font-size: 11px;
+  color: var(--gold-2);
+}
 .workshop-input {
   width: 100%;
   min-height: 72px;

@@ -1,8 +1,12 @@
 import { httpFetch } from "./http";
 import { OLLAMA_CLOUD_MODELS, OLLAMA_LOCAL_MODELS } from "./ollamaCatalog";
 import { consumeNdjson } from "./sse";
+import { ollamaBudget, ollamaThink } from "./ollamaThink";
+import { readStream, type StreamHandlers, type StreamResult } from "./stream";
 import type { ChatMessage, Settings } from "./types";
 import type { ProviderId } from "./providers";
+
+export { ollamaBudget, ollamaThink };
 
 export function isOllamaProvider(id: ProviderId) {
   return id === "ollama" || id === "ollama-cloud";
@@ -48,40 +52,14 @@ export async function listOllamaModels(settings: Settings, id: ProviderId): Prom
   }
 }
 
-async function readNdjson(
-  body: ReadableStream<Uint8Array> | null,
-  onDelta: (chunk: string) => void,
-): Promise<string> {
-  if (!body) throw new Error("Empty response body");
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let full = "";
-  const eat = (chunk: string, flush: boolean) => {
-    const next = consumeNdjson(buffer + chunk, flush);
-    buffer = next.rest;
-    for (const piece of next.pieces) {
-      full += piece;
-      onDelta(piece);
-    }
-  };
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    eat(decoder.decode(value, { stream: true }), false);
-  }
-  eat(decoder.decode(), true);
-  return full;
-}
-
 export async function streamOllamaChat(opts: {
   settings: Settings;
   messages: ChatMessage[];
   maxTokens?: number;
   temperature?: number;
-  onDelta: (chunk: string) => void;
   signal?: AbortSignal;
-}): Promise<string> {
+  handlers: StreamHandlers;
+}): Promise<StreamResult> {
   const id = opts.settings.provider;
   const base = ollamaBase(opts.settings, id);
   const key = ollamaAuth(opts.settings, id);
@@ -91,6 +69,7 @@ export async function streamOllamaChat(opts: {
   const model = opts.settings.model;
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (key) headers.authorization = `Bearer ${key}`;
+  const think = ollamaThink(model, opts.settings.reasoning);
 
   const res = await httpFetch(`${base}/api/chat`, {
     method: "POST",
@@ -99,13 +78,14 @@ export async function streamOllamaChat(opts: {
       model,
       messages: opts.messages,
       stream: true,
+      think,
       options: {
         temperature: opts.temperature ?? 0.6,
-        num_predict: opts.maxTokens ?? 800,
+        num_predict: ollamaBudget(opts.maxTokens ?? 800, think),
       },
     }),
     signal: opts.signal,
   });
   if (!res.ok) throw new Error(await errorText(res));
-  return readNdjson(res.body, opts.onDelta);
+  return readStream(res.body, consumeNdjson, opts.handlers);
 }
