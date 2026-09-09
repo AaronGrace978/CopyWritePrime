@@ -11,6 +11,8 @@ export interface Brief {
 export interface WorkshopTurn {
   role: "user" | "assistant";
   content: string;
+  /** Empty, stalled, or errored reply. Shown with a retry, never sent back as history. */
+  failed?: boolean;
 }
 
 export interface DocRecord {
@@ -63,6 +65,7 @@ export async function loadSettings(): Promise<Settings> {
     voice: saved.voice ?? null,
     kokoroVoice: saved.kokoroVoice || "af_heart",
     kokoroSpeed: typeof saved.kokoroSpeed === "number" ? saved.kokoroSpeed : 1,
+    reasoning: saved.reasoning === true,
   };
 }
 

@@ -2,13 +2,24 @@ import { killEmDashes } from "./dashes";
 import { PROVIDERS, providerById, type ProviderId } from "./providers";
 import { httpFetch } from "./http";
 import { isOllamaProvider, streamOllamaChat } from "./ollama";
-import { anthropicDelta, consumeSse, cohereDelta, geminiDelta, openaiDelta } from "./sse";
+import {
+  anthropicDelta,
+  cohereDelta,
+  consumeSseJson,
+  finishReason,
+  geminiDelta,
+  openaiDelta,
+  thinkingDelta,
+  type Json,
+} from "./sse";
+import { readStream, watchdog, type StreamBatch, type StreamHandlers, type StreamResult } from "./stream";
 import { DEFAULT_SETTINGS, normalizeFlow, normalizeTypeScale, type ChatMessage, type Settings } from "./types";
 import { excerptCorpus } from "./voice";
 import { clipWorkshopHistory, packPageForWorkshop, wantsFullRewrite } from "./workshopPage";
 
 export type { ChatMessage, Settings };
 export { DEFAULT_SETTINGS, normalizeFlow, normalizeTypeScale };
+export { StallError } from "./stream";
 
 function writerSystem(extra?: string) {
   const ban =
@@ -35,48 +46,89 @@ function withVoice(settings: Settings, messages: ChatMessage[], skipVoice?: bool
   return [{ role: "system", content: `Match the writer's voice.${note}` }, ...messages];
 }
 
-async function readSse(
-  body: ReadableStream<Uint8Array> | null,
-  pick: (json: Record<string, unknown>) => string | undefined,
-  onDelta: (chunk: string) => void,
-): Promise<string> {
-  if (!body) throw new Error("Empty response body");
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let full = "";
-  const eat = (chunk: string, flush: boolean) => {
-    const next = consumeSse(buffer + chunk, pick, flush);
-    buffer = next.rest;
-    for (const piece of next.pieces) {
-      full += piece;
-      onDelta(piece);
+/** SSE line parser that also lifts reasoning traces and the finish reason out of each event. */
+function sseBatch(pick: (json: Json) => string | undefined) {
+  return (buffer: string, flush: boolean): StreamBatch => {
+    const { rest, events } = consumeSseJson(buffer, flush);
+    const pieces: string[] = [];
+    const thoughts: string[] = [];
+    let done: string | undefined;
+    for (const json of events) {
+      const piece = pick(json);
+      if (piece) pieces.push(piece);
+      const thought = thinkingDelta(json);
+      if (thought) thoughts.push(thought);
+      const finish = finishReason(json);
+      if (finish) done = finish;
     }
+    return { rest, pieces, thoughts, done };
   };
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    eat(decoder.decode(value, { stream: true }), false);
-  }
-  eat(decoder.decode(), true);
-  return full;
 }
 
-export async function streamChat(opts: {
+function readSse(
+  body: ReadableStream<Uint8Array> | null,
+  pick: (json: Json) => string | undefined,
+  handlers: StreamHandlers,
+): Promise<StreamResult> {
+  return readStream(body, sseBatch(pick), handlers);
+}
+
+export interface StreamChatOptions {
   settings: Settings;
   messages: ChatMessage[];
   maxTokens?: number;
   temperature?: number;
   onDelta: (chunk: string) => void;
+  /** Reasoning trace, if the model emits one. Never part of the reply. */
+  onThinking?: (chunk: string) => void;
   signal?: AbortSignal;
   skipVoice?: boolean;
-}): Promise<string> {
+}
+
+/**
+ * Stream one chat completion. Resolves with the reply text. Throws a StallError when the
+ * provider goes silent, a plain Error for HTTP or model errors, and passes user aborts through.
+ */
+export async function streamChat(opts: StreamChatOptions): Promise<string> {
   const provider = providerById(opts.settings.provider);
   const key = opts.settings.keys[provider.id] ?? "";
   if (!isOllamaProvider(provider.id) && provider.id !== "custom" && !key) {
     throw new Error(`Add a ${provider.name} key in Settings.`);
   }
+  const model = opts.settings.model || provider.models[0];
+  const label = `${model} on ${provider.name}`;
+  const dog = watchdog(opts.signal, label);
+  const handlers: StreamHandlers = {
+    onDelta: opts.onDelta,
+    onThinking: opts.onThinking,
+    onActivity: dog.touch,
+  };
 
+  let result: StreamResult;
+  try {
+    result = await streamProvider({ ...opts, signal: dog.signal }, handlers);
+  } catch (e) {
+    const stall = dog.stalled();
+    if (stall) throw stall;
+    throw e;
+  } finally {
+    dog.stop();
+  }
+
+  if (!result.text.trim() && result.thinking.trim()) {
+    if (result.finish === "length") {
+      throw new Error(
+        `${model} spent its whole reply budget thinking and never wrote the answer. Turn Reasoning off under Keys, or pick a faster model.`,
+      );
+    }
+    throw new Error(`${model} thought for a while but sent no answer. Ask again, or turn Reasoning off under Keys.`);
+  }
+  return result.text;
+}
+
+async function streamProvider(opts: StreamChatOptions, handlers: StreamHandlers): Promise<StreamResult> {
+  const provider = providerById(opts.settings.provider);
+  const key = opts.settings.keys[provider.id] ?? "";
   const base =
     provider.id === "custom" ? opts.settings.customBaseUrl.replace(/\/$/, "") : provider.baseUrl;
   const model = opts.settings.model || provider.models[0];
@@ -85,7 +137,14 @@ export async function streamChat(opts: {
   const messages = withVoice(opts.settings, opts.messages, opts.skipVoice);
 
   if (provider.kind === "ollama") {
-    return streamOllamaChat({ ...opts, messages });
+    return streamOllamaChat({
+      settings: opts.settings,
+      messages,
+      maxTokens,
+      temperature,
+      signal: opts.signal,
+      handlers,
+    });
   }
 
   if (provider.kind === "anthropic") {
@@ -114,7 +173,7 @@ export async function streamChat(opts: {
       signal: opts.signal,
     });
     if (!res.ok) throw new Error(await errorText(res));
-    return readSse(res.body, anthropicDelta, opts.onDelta);
+    return readSse(res.body, anthropicDelta, handlers);
   }
 
   if (provider.kind === "google") {
@@ -140,7 +199,7 @@ export async function streamChat(opts: {
       signal: opts.signal,
     });
     if (!res.ok) throw new Error(await errorText(res));
-    return readSse(res.body, geminiDelta, opts.onDelta);
+    return readSse(res.body, geminiDelta, handlers);
   }
 
   if (provider.kind === "cohere") {
@@ -168,7 +227,7 @@ export async function streamChat(opts: {
       signal: opts.signal,
     });
     if (!res.ok) throw new Error(await errorText(res));
-    return readSse(res.body, cohereDelta, opts.onDelta);
+    return readSse(res.body, cohereDelta, handlers);
   }
 
   const headers: Record<string, string> = { "content-type": "application/json" };
@@ -191,7 +250,7 @@ export async function streamChat(opts: {
     signal: opts.signal,
   });
   if (!res.ok) throw new Error(await errorText(res));
-  return readSse(res.body, openaiDelta, opts.onDelta);
+  return readSse(res.body, openaiDelta, handlers);
 }
 
 async function errorText(res: Response) {
@@ -369,6 +428,7 @@ export async function workshopChat(
     brief?: string;
     history: { role: "user" | "assistant"; content: string }[];
     question: string;
+    onThinking?: (chunk: string) => void;
   },
   onDelta: (chunk: string) => void,
   signal?: AbortSignal,
@@ -380,6 +440,7 @@ export async function workshopChat(
     maxTokens: rewrite ? 8000 : 4000,
     temperature: 0.4,
     signal,
+    onThinking: opts.onThinking,
     messages: [
       {
         role: "system",

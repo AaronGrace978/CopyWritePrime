@@ -23,6 +23,11 @@ export interface Settings {
   voice?: VoiceProfile | null;
   kokoroVoice: string;
   kokoroSpeed: number;
+  /**
+   * Let reasoning models (GLM, Qwen 3, DeepSeek, gpt-oss) think before they write. Off by
+   * default: thinking counts against the reply budget and can eat all of it on a short task.
+   */
+  reasoning: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -39,6 +44,7 @@ export const DEFAULT_SETTINGS: Settings = {
   voice: null,
   kokoroVoice: "af_heart",
   kokoroSpeed: 1,
+  reasoning: false,
 };
 
 export function normalizeFlow(flow: unknown): FlowMode {

@@ -69,6 +69,8 @@ Type bar: **B I U**, **HL** (your highlighter), **AI** (show/hide gold marks), H
 
 A copy chief in the right rail. It reads the page that’s already written — **On the page** shows a capped preview so a long draft cannot freeze the rail. Long pages are packed before the ask: outline, opening, close, and any selection. Workshop will not send 240k characters to the model, and it cannot rewrite a 240k-character page in one shot. Ask about a section, or highlight the stretch you want. **⌘J** opens it. Highlight a sentence and hit **Workshop** on the bar to bring that line in. **Drop on page** only when you want the rewrite. Dropped lines land in gold. **Stop** cancels a reply without losing your question. If the model never starts talking, Workshop times out instead of hanging. Typing on the page no longer kills the answer.
 
+Thinking models (GLM, Qwen 3, DeepSeek, gpt-oss) used to sit on “Listening…” for a long time, then come back empty: Ollama turns thinking on by default, the trace ate the reply budget, and Workshop showed nothing. **Reasoning** under Keys is off by default, so Workshop asks for the answer first. The rail shows **Listening / Thinking / Writing** with a timer. A silent provider is cut off after ~75s. Empty or failed replies get **Try again**.
+
 ## Voice
 
 Point the harness at a folder of past work (PDF, Word, `.txt`, `.md`, `.html`) or learn from the pages already in CopyWritePrime. It builds a voice card: sentence length, person, rhythm, diction. **Write like me** injects that card into Flow, Workshop, Enhance, and Complete. Toggle it off without forgetting the profile.
@@ -101,7 +103,7 @@ npm install
 npm run tauri dev
 ```
 
-Add a provider key under **Keys**. Flow needs a model.
+Add a provider key under **Keys**. Flow needs a model. **Reasoning** there is off by default so thinking models answer instead of chewing the reply budget.
 
 ## Build
 
