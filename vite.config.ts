@@ -9,6 +9,10 @@ export default defineConfig(async () => ({
   plugins: [react()],
   optimizeDeps: {
     include: ["pdfjs-dist", "mammoth"],
+    exclude: ["@huggingface/transformers", "kokoro-js"],
+  },
+  worker: {
+    format: "es",
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
