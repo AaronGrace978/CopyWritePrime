@@ -75,7 +75,7 @@ Point the harness at a folder of past work (PDF, Word, `.txt`, `.md`, `.html`) o
 
 ## Kokoro
 
-**Listen** reads the page (or the selection) with [Kokoro](https://github.com/hexgrad/kokoro) in the app. The model runs locally after a one-time download. CopyWritePrime splits the copy into short slices, retries anything that comes back too short, and queues the audio so a hiccup cannot swallow the ending. Esc or **Stop** cancels. Pick Heart, Bella, Michael, Emma, and the rest in the Flow rail.
+**Listen** reads the page (or the selection) with [Kokoro](https://github.com/hexgrad/kokoro) in the app. The model runs locally after a one-time download, on a background worker so the studio does not freeze. CopyWritePrime splits the copy into short slices, retries anything that comes back too short, and plays WAV clips in order so a hiccup cannot swallow the ending. Esc or **Stop** cancels. Pick Heart, Bella, Michael, Emma, and the rest in the Flow rail.
 
 ## Logs
 

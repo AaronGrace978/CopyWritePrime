@@ -36,7 +36,7 @@ import {
   workshopMarkdown,
 } from "./lib/logs";
 import { buildVoiceProfile } from "./lib/voice";
-import { KOKORO_VOICES, listenWithKokoro, stopKokoro } from "./lib/kokoro";
+import { KOKORO_VOICES, listenWithKokoro, stopKokoro, unlockKokoroAudio, warmupKokoro } from "./lib/kokoro";
 import {
   findLastTextRange,
   insertAiContent,
@@ -292,6 +292,11 @@ export default function App() {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor]);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => warmupKokoro(), 1600);
+    return () => window.clearTimeout(t);
+  }, []);
 
   useEffect(() => {
     const el = paperRef.current;
@@ -728,6 +733,7 @@ export default function App() {
   }
 
   async function listenNow(source?: string) {
+    unlockKokoroAudio();
     const text = (source ?? sel?.text ?? pagePlain(editor)).replace(/\s+/g, " ").trim();
     if (!text) {
       setError("Write something, then Listen.");
@@ -1537,7 +1543,7 @@ export default function App() {
           </button>
           <h2 style={{ marginTop: 28 }}>Kokoro</h2>
           <p className="kit" style={{ paddingLeft: 0 }}>
-            Reads the page out loud, in slices, so it cannot swallow the ending. Selection first if you have one.
+            Reads the page out loud. Synthesis runs in a background worker so the studio does not freeze. Selection first if you have one.
           </p>
           <select
             className="voice-select"
