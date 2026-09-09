@@ -15,6 +15,7 @@ import {
 import { readStream, watchdog, type StreamBatch, type StreamHandlers, type StreamResult } from "./stream";
 import { DEFAULT_SETTINGS, normalizeFlow, normalizeTypeScale, type ChatMessage, type Settings } from "./types";
 import { excerptCorpus } from "./voice";
+import { clipWorkshopHistory, packPageForWorkshop, wantsFullRewrite } from "./workshopPage";
 
 export type { ChatMessage, Settings };
 export { DEFAULT_SETTINGS, normalizeFlow, normalizeTypeScale };
@@ -432,10 +433,11 @@ export async function workshopChat(
   onDelta: (chunk: string) => void,
   signal?: AbortSignal,
 ) {
-  const page = opts.page.trim().slice(0, 16000) || "(empty)";
+  const packed = packPageForWorkshop(opts.page, opts.selection);
+  const rewrite = wantsFullRewrite(opts.question);
   return streamChat({
     settings,
-    maxTokens: 1400,
+    maxTokens: rewrite ? 8000 : 4000,
     temperature: 0.4,
     signal,
     onThinking: opts.onThinking,
@@ -443,15 +445,14 @@ export async function workshopChat(
       {
         role: "system",
         content: writerSystem(
-          "You are Workshop, a copy chief sitting next to the writer. You can see the PAGE. That is what is already written. Read it before you answer. Quote from it. Do not invent lines that are not on the page. Be direct. Prefer numerals, $ and % in ads, prices, and stats. Never spell those out. Never use an em dash. If a required stat was paraphrased, say so and give the exact line. Do not rewrite the whole page unless they ask. If you offer a line of copy, put it on its own paragraph. No cheerleading. No preamble." +
-            briefNote(opts.brief) +
-            `\n\nPAGE (already written)\n${page}`,
+          "You are Workshop, a copy chief sitting next to the writer. You can see the PAGE in the user turn. That is what is already written. Read it before you answer. Quote from it. Do not invent lines that are not on the page. Be direct. Prefer numerals, $ and % in ads, prices, and stats. Never spell those out. Never use an em dash. If a required stat was paraphrased, say so and give the exact line. Do not rewrite the whole page unless they ask. If the page is packed, work from outline, opening, close, and any selected stretch. You cannot emit a 200k-character document in one reply. If they want a full rewrite, do one named section. If you offer a line of copy, put it on its own paragraph. No cheerleading. No preamble." +
+            briefNote(opts.brief),
         ),
       },
-      ...opts.history.slice(-10),
+      ...clipWorkshopHistory(opts.history),
       {
         role: "user",
-        content: `The page is already in your context. Use it.\n\nSELECTION\n${opts.selection.trim() || "(none. Talk about the whole page.)"}\n\nQUESTION\n${opts.question.trim()}`,
+        content: `PAGE\n${packed.text}\n\nSELECTION\n${opts.selection.trim() || "(none. Talk about the page you have.)"}\n\nQUESTION\n${opts.question.trim()}`,
       },
     ],
     onDelta,
