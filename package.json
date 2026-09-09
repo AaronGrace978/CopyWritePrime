@@ -27,6 +27,7 @@
     "@tiptap/react": "^3.0.9",
     "@tiptap/starter-kit": "^3.0.9",
     "docx": "^9.5.1",
+    "kokoro-js": "^1.2.1",
     "mammoth": "^1.12.1",
     "pdfjs-dist": "^6.2.108",
     "react": "^19.1.0",

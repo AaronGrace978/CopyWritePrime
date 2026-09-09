@@ -36,6 +36,7 @@ import {
   workshopMarkdown,
 } from "./lib/logs";
 import { buildVoiceProfile } from "./lib/voice";
+import { KOKORO_VOICES, listenWithKokoro, stopKokoro } from "./lib/kokoro";
 import {
   findLastTextRange,
   insertAiContent,
@@ -101,10 +102,16 @@ function TypeBar({
   editor,
   showAiMarks,
   onToggleAiMarks,
+  listening,
+  onListen,
+  onStop,
 }: {
   editor: Editor | null;
   showAiMarks: boolean;
   onToggleAiMarks: () => void;
+  listening: boolean;
+  onListen: () => void;
+  onStop: () => void;
 }) {
   if (!editor) return null;
   const size = (editor.getAttributes("textStyle").fontSize as string | undefined) ?? "";
@@ -148,6 +155,16 @@ function TypeBar({
           {s.label}
         </button>
       ))}
+      <span className="type-gap" />
+      {listening ? (
+        <button className="active" title="Stop Kokoro" onClick={onStop}>
+          Stop
+        </button>
+      ) : (
+        <button title="Read with Kokoro" onClick={onListen}>
+          Listen
+        </button>
+      )}
     </div>
   );
 }
@@ -176,6 +193,7 @@ export default function App() {
   const [liveWorkshop, setLiveWorkshop] = useState<WorkshopTurn[] | null>(null);
   const [logsOpen, setLogsOpen] = useState(false);
   const [voiceBusy, setVoiceBusy] = useState(false);
+  const [kokoroBusy, setKokoroBusy] = useState(false);
   const workshopEndRef = useRef<HTMLDivElement>(null);
   const workshopFieldRef = useRef<HTMLTextAreaElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
@@ -190,6 +208,7 @@ export default function App() {
   const briefRef = useRef("");
   const workshopBusyRef = useRef(false);
   const busyRef = useRef(false);
+  const listenGenRef = useRef(0);
   const paperRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const onPauseRef = useRef<() => Promise<void>>(async () => undefined);
@@ -701,6 +720,40 @@ export default function App() {
     setStatus(changed ? "Em dashes are gone." : "No em dashes on the page.");
   }
 
+  function haltKokoro() {
+    listenGenRef.current += 1;
+    stopKokoro();
+    setKokoroBusy(false);
+    setStatus("Kokoro stopped.");
+  }
+
+  async function listenNow(source?: string) {
+    const text = (source ?? sel?.text ?? pagePlain(editor)).replace(/\s+/g, " ").trim();
+    if (!text) {
+      setError("Write something, then Listen.");
+      return;
+    }
+    const n = ++listenGenRef.current;
+    setError("");
+    setKokoroBusy(true);
+    setStatus("Kokoro warming up…");
+    try {
+      await listenWithKokoro(text, {
+        voice: settingsRef.current.kokoroVoice,
+        speed: settingsRef.current.kokoroSpeed,
+        onStatus: (msg) => {
+          if (n === listenGenRef.current) setStatus(msg);
+        },
+      });
+    } catch (e) {
+      if (n !== listenGenRef.current) return;
+      setError(e instanceof Error ? e.message : String(e));
+      setStatus("Kokoro paused.");
+    } finally {
+      if (n === listenGenRef.current) setKokoroBusy(false);
+    }
+  }
+
   function insertWorkshop(text: string) {
     if (!editor || !text.trim()) return;
     insertAiContent(editor, proseToHtml(killEmDashes(text)));
@@ -1063,6 +1116,7 @@ export default function App() {
         setSettingsOpen(false);
         setScanOpen(false);
         setLogsOpen(false);
+        haltKokoro();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -1128,6 +1182,9 @@ export default function App() {
           </button>
           <button className={`ghost ${railTab === "voice" ? "on" : ""} ${settings.voiceEnabled && settings.voice ? "lit" : ""}`} onClick={() => setRailTab("voice")}>
             Voice
+          </button>
+          <button className={`ghost ${kokoroBusy ? "on" : ""}`} onClick={() => (kokoroBusy ? haltKokoro() : void listenNow())}>
+            {kokoroBusy ? "Stop" : "Listen"}
           </button>
           <button className={`ghost ${logsOpen ? "on" : ""}`} onClick={() => setLogsOpen(true)}>
             Logs
@@ -1257,6 +1314,7 @@ export default function App() {
                 </button>
               ))}
               <button onClick={killDashesNow}>Em dash</button>
+              <button onClick={() => void listenNow(sel.text)}>Listen</button>
               <button
                 onClick={() => {
                   openWorkshop();
@@ -1271,6 +1329,9 @@ export default function App() {
             editor={editor}
             showAiMarks={settings.showAiMarks}
             onToggleAiMarks={() => void patchSettings({ showAiMarks: !settings.showAiMarks })}
+            listening={kokoroBusy}
+            onListen={() => void listenNow()}
+            onStop={haltKokoro}
           />
           <div className={`paper scale-${settings.typeScale}${settings.showAiMarks ? "" : " hide-ai"}`} ref={paperRef} data-scale={settings.typeScale}>
             <EditorContent editor={editor} />
@@ -1474,6 +1535,49 @@ export default function App() {
           <button className="rail-btn" onClick={killDashesNow}>
             Kill em dashes
           </button>
+          <h2 style={{ marginTop: 28 }}>Kokoro</h2>
+          <p className="kit" style={{ paddingLeft: 0 }}>
+            Reads the page out loud, in slices, so it cannot swallow the ending. Selection first if you have one.
+          </p>
+          <select
+            className="voice-select"
+            value={settings.kokoroVoice}
+            onChange={(e) => void patchSettings({ kokoroVoice: e.target.value })}
+          >
+            {KOKORO_VOICES.map((v) => (
+              <option key={v.id} value={v.id}>
+                {v.label}
+              </option>
+            ))}
+            {!KOKORO_VOICES.some((v) => v.id === settings.kokoroVoice) && settings.kokoroVoice && (
+              <option value={settings.kokoroVoice}>{settings.kokoroVoice}</option>
+            )}
+          </select>
+          <div className="toggles" style={{ padding: 0, margin: "10px 0" }}>
+            {([0.85, 1, 1.15] as const).map((spd) => (
+              <button
+                key={spd}
+                className={settings.kokoroSpeed === spd ? "active" : ""}
+                onClick={() => void patchSettings({ kokoroSpeed: spd })}
+              >
+                {spd === 0.85 ? "slow" : spd === 1 ? "pace" : "fast"}
+              </button>
+            ))}
+          </div>
+          {kokoroBusy ? (
+            <button className="rail-btn" onClick={haltKokoro}>
+              Stop reading
+            </button>
+          ) : (
+            <>
+              <button className="rail-btn" onClick={() => void listenNow()}>
+                Listen to page
+              </button>
+              <button className="rail-btn" disabled={!sel?.text} onClick={() => void listenNow(sel?.text)}>
+                Listen to selection
+              </button>
+            </>
+          )}
           <p className="kit" style={{ paddingLeft: 0, marginTop: 10 }}>
             Gold on the page is what the model wrote. HL is your highlighter. AI on the type bar hides the gold. Em dash is the AI tell. Kill it.
           </p>

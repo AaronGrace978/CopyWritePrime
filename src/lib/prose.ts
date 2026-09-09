@@ -1,5 +1,5 @@
 import type { Editor } from "@tiptap/react";
-import { killEmDashes } from "./dashes";
+import { killEmDashes } from "./dashes.ts";
 
 export function splitSentences(text: string): { start: number; end: number }[] {
   const ranges: { start: number; end: number }[] = [];

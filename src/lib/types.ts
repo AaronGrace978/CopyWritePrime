@@ -21,6 +21,8 @@ export interface Settings {
   showAiMarks: boolean;
   voiceEnabled: boolean;
   voice?: VoiceProfile | null;
+  kokoroVoice: string;
+  kokoroSpeed: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -35,6 +37,8 @@ export const DEFAULT_SETTINGS: Settings = {
   showAiMarks: true,
   voiceEnabled: true,
   voice: null,
+  kokoroVoice: "af_heart",
+  kokoroSpeed: 1,
 };
 
 export function normalizeFlow(flow: unknown): FlowMode {

@@ -598,7 +598,16 @@ button { cursor: pointer; }
   color: var(--muted);
   font-size: 12px;
 }
-.sample-list small { color: #6f6a62; }
+.voice-select {
+  width: 100%;
+  background: var(--ink-2);
+  color: #f3ece3;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  margin-top: 4px;
+}
 .log-block {
   margin: 0 18px 14px;
   padding: 10px 12px;

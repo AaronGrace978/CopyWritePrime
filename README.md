@@ -13,7 +13,7 @@ Bring your own keys. OpenAI, Anthropic, Gemini, Groq, xAI, Mistral, DeepSeek, Op
 - **Off** — no ghost. Auto-fix can still clean the last line.
 - **Fix last line** / **Enhance last paragraph** — run it now, no waiting.
 
-Type bar: **B I U**, **HL** (your highlighter), **AI** (show/hide gold marks), H1 / H2 / Body, Auto / S / M / L / XL / Title. Auto sizes the page to the window. Gold wash is what Flow, Enhance, Complete, or Workshop dropped. **Clear AI marks** keeps the words and drops the gold. **Kill em dashes** (selbar or Flow rail) strips the AI tell off the page. Flow is banned from writing them.
+Type bar: **B I U**, **HL** (your highlighter), **AI** (show/hide gold marks), H1 / H2 / Body, Auto / S / M / L / XL / Title, **Listen**. Auto sizes the page to the window. Gold wash is what Flow, Enhance, Complete, or Workshop dropped. **Clear AI marks** keeps the words and drops the gold. **Kill em dashes** (selbar or Flow rail) strips the AI tell off the page. Flow is banned from writing them.
 
 ## Pages
 
@@ -28,6 +28,10 @@ A copy chief in the right rail. It reads the page that’s already written — *
 ## Voice
 
 Point the harness at a folder of past work (PDF, Word, `.txt`, `.md`, `.html`) or learn from the pages already in CopyWritePrime. It builds a voice card: sentence length, person, rhythm, diction. **Write like me** injects that card into Flow, Workshop, Enhance, and Complete. Toggle it off without forgetting the profile.
+
+## Kokoro
+
+**Listen** reads the page (or the selection) with [Kokoro](https://github.com/hexgrad/kokoro) in the app. The model runs locally after a one-time download. CopyWritePrime splits the copy into short slices, retries anything that comes back too short, and queues the audio so a hiccup cannot swallow the ending. Esc or **Stop** cancels. Pick Heart, Bella, Michael, Emma, and the rest in the Flow rail.
 
 ## Logs
 

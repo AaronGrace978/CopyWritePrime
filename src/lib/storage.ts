@@ -61,6 +61,8 @@ export async function loadSettings(): Promise<Settings> {
     showAiMarks: saved.showAiMarks !== false,
     voiceEnabled: saved.voiceEnabled !== false,
     voice: saved.voice ?? null,
+    kokoroVoice: saved.kokoroVoice || "af_heart",
+    kokoroSpeed: typeof saved.kokoroSpeed === "number" ? saved.kokoroSpeed : 1,
   };
 }
 
