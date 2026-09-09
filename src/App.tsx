@@ -37,6 +37,7 @@ import {
 } from "./lib/logs";
 import { buildVoiceProfile } from "./lib/voice";
 import { KOKORO_VOICES, listenWithKokoro, stopKokoro, unlockKokoroAudio, warmupKokoro } from "./lib/kokoro";
+import { packPageForWorkshop, previewPage, WORKSHOP_STALL_MS } from "./lib/workshopPage";
 import {
   findLastTextRange,
   insertAiContent,
@@ -190,6 +191,7 @@ export default function App() {
   const [railTab, setRailTab] = useState<"flow" | "workshop" | "voice">("flow");
   const [workshopInput, setWorkshopInput] = useState("");
   const [workshopBusy, setWorkshopBusy] = useState(false);
+  const [pagePeek, setPagePeek] = useState(false);
   const [liveWorkshop, setLiveWorkshop] = useState<WorkshopTurn[] | null>(null);
   const [logsOpen, setLogsOpen] = useState(false);
   const [voiceBusy, setVoiceBusy] = useState(false);
@@ -649,7 +651,13 @@ export default function App() {
     setWorkshopBusy(true);
     setRailTab("workshop");
     setError("");
-    setStatus("Workshop is on the line…");
+    const page = pagePlain(editor);
+    const packed = packPageForWorkshop(page, sel?.text ?? "");
+    setStatus(
+      packed.packed
+        ? `Workshop packed ${packed.originalChars} characters. Using outline, opening, and close.`
+        : "Workshop is on the line…",
+    );
     flowAbortRef.current?.abort();
     if (flowTimer.current) window.clearTimeout(flowTimer.current);
     const job = ++jobGenRef.current;
@@ -657,15 +665,30 @@ export default function App() {
     const ac = new AbortController();
     jobAbortRef.current = ac;
     let acc = "";
+    let stalled = false;
+    let paintTimer = 0;
     const paint = () => {
       if (job !== jobGenRef.current) return;
       setLiveWorkshop([...prior, userTurn, { role: "assistant", content: killEmDashes(acc) }]);
     };
+    const paintSoon = () => {
+      if (paintTimer) return;
+      paintTimer = window.setTimeout(() => {
+        paintTimer = 0;
+        paint();
+      }, 50);
+    };
+    const stallTimer = window.setTimeout(() => {
+      if (!acc && !ac.signal.aborted) {
+        stalled = true;
+        ac.abort();
+      }
+    }, WORKSHOP_STALL_MS);
     const ask = () =>
       workshopChat(
         s,
         {
-          page: pagePlain(editor),
+          page,
           selection: sel?.text ?? "",
           brief: briefRef.current,
           history: prior,
@@ -674,24 +697,39 @@ export default function App() {
         (chunk) => {
           if (job !== jobGenRef.current) return;
           acc += chunk;
-          paint();
+          window.clearTimeout(stallTimer);
+          paintSoon();
         },
         ac.signal,
       );
     try {
+      const started = Date.now();
       await ask();
       if (job !== jobGenRef.current) return;
-      if (!acc.trim() && !ac.signal.aborted) {
+      const quickEmpty = !acc.trim() && !ac.signal.aborted && !stalled && Date.now() - started < 10_000;
+      if (quickEmpty) {
         acc = "";
         await ask();
       }
       if (job !== jobGenRef.current) return;
+      if (paintTimer) window.clearTimeout(paintTimer);
+      paint();
       const text = killEmDashes(acc).trim() || "Nothing came back. Ask again.";
       setWorkshop([...prior, userTurn, { role: "assistant", content: text }]);
       setLiveWorkshop(null);
       setStatus("Workshop answered. The page didn't move.");
     } catch (e) {
       if (job !== jobGenRef.current) return;
+      if (paintTimer) window.clearTimeout(paintTimer);
+      if (stalled) {
+        const hint = packed.packed
+          ? "The page is huge, so Workshop packed it, but the model never started talking. Highlight a section and ask about that."
+          : "The model never started talking. Ask again, or pick a shorter stretch.";
+        setWorkshop([...prior, userTurn, { role: "assistant", content: hint }]);
+        setLiveWorkshop(null);
+        setStatus("Workshop stalled.");
+        return;
+      }
       if (isAbortError(e)) {
         const partial = killEmDashes(acc).trim();
         setWorkshop([...prior, userTurn, { role: "assistant", content: partial || "(stopped before a reply.)" }]);
@@ -705,6 +743,8 @@ export default function App() {
       setError(msg);
       setStatus("Workshop paused.");
     } finally {
+      window.clearTimeout(stallTimer);
+      if (paintTimer) window.clearTimeout(paintTimer);
       if (job === jobGenRef.current) {
         workshopBusyRef.current = false;
         setWorkshopBusy(false);
@@ -1373,7 +1413,11 @@ export default function App() {
             <div className="workshop">
               <p className="kit" style={{ paddingLeft: 0 }}>
                 Argue the line. The page stays put until you drop a rewrite.
-                {sel?.text ? ` Using: “${sel.text.replace(/\s+/g, " ").trim().slice(0, 80)}${sel.text.length > 80 ? "…" : ""}”` : " Reading the whole page."}
+                {sel?.text
+                  ? ` Using: “${sel.text.replace(/\s+/g, " ").trim().slice(0, 80)}${sel.text.length > 80 ? "…" : ""}”`
+                  : words > 2500
+                    ? " Long page. Workshop packs outline, opening, and close."
+                    : " Reading the whole page."}
               </p>
               <div className="log-bar">
                 <button className="doc-mini" onClick={() => void exportThisChat()}>
@@ -1386,9 +1430,15 @@ export default function App() {
                   All logs
                 </button>
               </div>
-              <details className="workshop-page">
+              <details
+                className="workshop-page"
+                open={pagePeek}
+                onToggle={(e) => setPagePeek((e.currentTarget as HTMLDetailsElement).open)}
+              >
                 <summary>On the page · {words} words</summary>
-                <pre>{pagePlain(editor) || "(empty. Write on the paper, then ask.)"}</pre>
+                {pagePeek ? (
+                  <pre>{previewPage(pagePlain(editor)) || "(empty. Write on the paper, then ask.)"}</pre>
+                ) : null}
               </details>
               <div className="workshop-log">
                 {((liveWorkshop ?? activeDoc?.workshop) ?? []).length === 0 && (
