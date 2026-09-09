@@ -1,4 +1,5 @@
 import type { ProviderId } from "./providers";
+import type { VoiceProfile } from "./voice";
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -18,6 +19,8 @@ export interface Settings {
   autoCorrect: boolean;
   typeScale: TypeScale;
   showAiMarks: boolean;
+  voiceEnabled: boolean;
+  voice?: VoiceProfile | null;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -30,6 +33,8 @@ export const DEFAULT_SETTINGS: Settings = {
   autoCorrect: true,
   typeScale: "auto",
   showAiMarks: true,
+  voiceEnabled: true,
+  voice: null,
 };
 
 export function normalizeFlow(flow: unknown): FlowMode {

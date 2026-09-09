@@ -2,7 +2,9 @@ import { killEmDashes } from "./dashes";
 import { PROVIDERS, providerById, type ProviderId } from "./providers";
 import { httpFetch } from "./http";
 import { isOllamaProvider, streamOllamaChat } from "./ollama";
+import { anthropicDelta, consumeSse, cohereDelta, geminiDelta, openaiDelta } from "./sse";
 import { DEFAULT_SETTINGS, normalizeFlow, normalizeTypeScale, type ChatMessage, type Settings } from "./types";
+import { excerptCorpus } from "./voice";
 
 export type { ChatMessage, Settings };
 export { DEFAULT_SETTINGS, normalizeFlow, normalizeTypeScale };
@@ -17,6 +19,21 @@ function writerSystem(extra?: string) {
   );
 }
 
+function voiceNote(settings: Settings) {
+  if (!settings.voiceEnabled || !settings.voice?.card?.trim()) return "";
+  return `\n\nVOICE. This is how they write. Match it. Do not imitate poorly. Do not announce the voice.\n---\n${settings.voice.card.slice(0, 4000)}`;
+}
+
+function withVoice(settings: Settings, messages: ChatMessage[], skipVoice?: boolean): ChatMessage[] {
+  const note = skipVoice ? "" : voiceNote(settings);
+  if (!note) return messages;
+  const first = messages[0];
+  if (first?.role === "system") {
+    return [{ ...first, content: first.content + note }, ...messages.slice(1)];
+  }
+  return [{ role: "system", content: `Match the writer's voice.${note}` }, ...messages];
+}
+
 async function readSse(
   body: ReadableStream<Uint8Array> | null,
   pick: (json: Record<string, unknown>) => string | undefined,
@@ -27,58 +44,21 @@ async function readSse(
   const decoder = new TextDecoder();
   let buffer = "";
   let full = "";
+  const eat = (chunk: string, flush: boolean) => {
+    const next = consumeSse(buffer + chunk, pick, flush);
+    buffer = next.rest;
+    for (const piece of next.pieces) {
+      full += piece;
+      onDelta(piece);
+    }
+  };
   while (true) {
     const { value, done } = await reader.read();
     if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split(/\r?\n/);
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith("data:")) continue;
-      const data = trimmed.slice(5).trim();
-      if (data === "[DONE]") continue;
-      try {
-        const json = JSON.parse(data) as Record<string, unknown>;
-        const piece = pick(json);
-        if (piece) {
-          full += piece;
-          onDelta(piece);
-        }
-      } catch {
-        /* keep scanning */
-      }
-    }
+    eat(decoder.decode(value, { stream: true }), false);
   }
+  eat(decoder.decode(), true);
   return full;
-}
-
-function openaiDelta(json: Record<string, unknown>) {
-  const choices = json.choices as Array<{ delta?: { content?: string } }> | undefined;
-  return choices?.[0]?.delta?.content;
-}
-
-function anthropicDelta(json: Record<string, unknown>) {
-  if (json.type === "content_block_delta") {
-    const delta = json.delta as { text?: string } | undefined;
-    return delta?.text;
-  }
-  return undefined;
-}
-
-function geminiDelta(json: Record<string, unknown>) {
-  const candidates = json.candidates as
-    | Array<{ content?: { parts?: Array<{ text?: string }> } }>
-    | undefined;
-  return candidates?.[0]?.content?.parts?.[0]?.text;
-}
-
-function cohereDelta(json: Record<string, unknown>) {
-  if (json.type === "content-delta") {
-    const delta = json.delta as { message?: { content?: { text?: string } } } | undefined;
-    return delta?.message?.content?.text;
-  }
-  return undefined;
 }
 
 export async function streamChat(opts: {
@@ -88,6 +68,7 @@ export async function streamChat(opts: {
   temperature?: number;
   onDelta: (chunk: string) => void;
   signal?: AbortSignal;
+  skipVoice?: boolean;
 }): Promise<string> {
   const provider = providerById(opts.settings.provider);
   const key = opts.settings.keys[provider.id] ?? "";
@@ -100,17 +81,18 @@ export async function streamChat(opts: {
   const model = opts.settings.model || provider.models[0];
   const maxTokens = opts.maxTokens ?? 800;
   const temperature = opts.temperature ?? 0.6;
+  const messages = withVoice(opts.settings, opts.messages, opts.skipVoice);
 
   if (provider.kind === "ollama") {
-    return streamOllamaChat(opts);
+    return streamOllamaChat({ ...opts, messages });
   }
 
   if (provider.kind === "anthropic") {
-    const system = opts.messages
+    const system = messages
       .filter((m) => m.role === "system")
       .map((m) => m.content)
       .join("\n\n");
-    const messages = opts.messages
+    const chat = messages
       .filter((m) => m.role !== "system")
       .map((m) => ({ role: m.role, content: m.content }));
     const res = await httpFetch(`${base}/v1/messages`, {
@@ -125,7 +107,7 @@ export async function streamChat(opts: {
         max_tokens: maxTokens,
         temperature,
         system,
-        messages,
+        messages: chat,
         stream: true,
       }),
       signal: opts.signal,
@@ -135,13 +117,13 @@ export async function streamChat(opts: {
   }
 
   if (provider.kind === "google") {
-    const contents = opts.messages
+    const contents = messages
       .filter((m) => m.role !== "system")
       .map((m) => ({
         role: m.role === "assistant" ? "model" : "user",
         parts: [{ text: m.content }],
       }));
-    const system = opts.messages
+    const system = messages
       .filter((m) => m.role === "system")
       .map((m) => m.content)
       .join("\n\n");
@@ -161,11 +143,11 @@ export async function streamChat(opts: {
   }
 
   if (provider.kind === "cohere") {
-    const system = opts.messages
+    const system = messages
       .filter((m) => m.role === "system")
       .map((m) => m.content)
       .join("\n\n");
-    const messages = opts.messages
+    const chat = messages
       .filter((m) => m.role !== "system")
       .map((m) => ({ role: m.role === "assistant" ? "assistant" : "user", content: m.content }));
     const res = await httpFetch(`${base}/chat`, {
@@ -177,8 +159,8 @@ export async function streamChat(opts: {
       body: JSON.stringify({
         model,
         messages: system
-          ? [{ role: "system", content: system }, ...messages]
-          : messages,
+          ? [{ role: "system", content: system }, ...chat]
+          : chat,
         stream: true,
         temperature,
       }),
@@ -200,7 +182,7 @@ export async function streamChat(opts: {
     headers,
     body: JSON.stringify({
       model,
-      messages: opts.messages,
+      messages,
       stream: true,
       temperature,
       max_tokens: maxTokens,
@@ -413,6 +395,32 @@ export async function workshopChat(
     ],
     onDelta,
   });
+}
+
+export async function distillVoice(settings: Settings, corpus: string, signal?: AbortSignal) {
+  const excerpt = excerptCorpus(corpus);
+  if (excerpt.trim().length < 80) return "";
+  let out = "";
+  await streamChat({
+    settings,
+    skipVoice: true,
+    maxTokens: 500,
+    temperature: 0.2,
+    signal,
+    messages: [
+      {
+        role: "system",
+        content: writerSystem(
+          "You write a voice card another writer will follow. From the samples, describe how THIS person writes: sentence length, person (I/you/we), rhythm, diction, what they punch, what they never do. 8–14 short lines. Imperative. No preamble. No quotes of whole paragraphs. Never use an em dash.",
+        ),
+      },
+      { role: "user", content: `SAMPLES\n${excerpt}` },
+    ],
+    onDelta: (c) => {
+      out += c;
+    },
+  });
+  return cleanModelText(out);
 }
 
 export function hasKey(settings: Settings) {

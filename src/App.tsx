@@ -11,6 +11,7 @@ import { SentenceSelect } from "./extensions/sentenceSelect";
 import { exportWord } from "./lib/docx";
 import {
   completeFromBrief,
+  distillVoice,
   workshopChat,
   DEFAULT_SETTINGS,
   defaultModelFor,
@@ -21,7 +22,20 @@ import {
   transform,
   type Settings,
 } from "./lib/llm";
+import { isAbortError } from "./lib/abort";
 import { killEmDashes } from "./lib/dashes";
+import { filesFromList, joinCorpus, pickWritingFolder, samplesOf, type CorpusFile } from "./lib/corpus";
+import { downloadText } from "./lib/download";
+import {
+  allWorkshopMarkdown,
+  archiveMarkdown,
+  docPlain,
+  pagesMarkdown,
+  turnCount,
+  workshopCount,
+  workshopMarkdown,
+} from "./lib/logs";
+import { buildVoiceProfile } from "./lib/voice";
 import {
   findLastTextRange,
   insertAiContent,
@@ -156,19 +170,26 @@ export default function App() {
   const [scanBusy, setScanBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [showArchive, setShowArchive] = useState(false);
-  const [railTab, setRailTab] = useState<"flow" | "workshop">("flow");
+  const [railTab, setRailTab] = useState<"flow" | "workshop" | "voice">("flow");
   const [workshopInput, setWorkshopInput] = useState("");
   const [workshopBusy, setWorkshopBusy] = useState(false);
   const [liveWorkshop, setLiveWorkshop] = useState<WorkshopTurn[] | null>(null);
+  const [logsOpen, setLogsOpen] = useState(false);
+  const [voiceBusy, setVoiceBusy] = useState(false);
   const workshopEndRef = useRef<HTMLDivElement>(null);
   const workshopFieldRef = useRef<HTMLTextAreaElement>(null);
+  const folderRef = useRef<HTMLInputElement>(null);
   const flowTimer = useRef<number | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
+  const flowAbortRef = useRef<AbortController | null>(null);
+  const jobAbortRef = useRef<AbortController | null>(null);
   const settingsRef = useRef(settings);
   const applyingRef = useRef(false);
-  const genRef = useRef(0);
+  const flowGenRef = useRef(0);
+  const jobGenRef = useRef(0);
   const lastFixedRef = useRef("");
   const briefRef = useRef("");
+  const workshopBusyRef = useRef(false);
+  const busyRef = useRef(false);
   const paperRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const onPauseRef = useRef<() => Promise<void>>(async () => undefined);
@@ -217,7 +238,8 @@ export default function App() {
       if (applyingRef.current) return;
       if (flowTimer.current) window.clearTimeout(flowTimer.current);
       ed.commands.clearFlowGhost();
-      abortRef.current?.abort();
+      flowAbortRef.current?.abort();
+      if (workshopBusyRef.current || busyRef.current) return;
       flowTimer.current = window.setTimeout(() => void onPauseRef.current(), 850);
     },
     onSelectionUpdate: ({ editor: ed }) => {
@@ -316,11 +338,11 @@ export default function App() {
 
   async function onPause() {
     const s = settingsRef.current;
-    if (!editor || !hasKey(s) || busy) return;
-    const gen = ++genRef.current;
-    abortRef.current?.abort();
+    if (!editor || !hasKey(s) || busyRef.current || workshopBusyRef.current) return;
+    const gen = ++flowGenRef.current;
+    flowAbortRef.current?.abort();
     const ac = new AbortController();
-    abortRef.current = ac;
+    flowAbortRef.current = ac;
 
     if (s.autoCorrect) {
       const unit = lastWritingUnit(editor.getText());
@@ -332,7 +354,7 @@ export default function App() {
             s.flow === "enhance"
               ? await enhanceSentence(s, unit, ac.signal)
               : await polishSentence(s, unit, ac.signal);
-          if (gen !== genRef.current) return;
+          if (gen !== flowGenRef.current) return;
           if (next) {
             applyingRef.current = true;
             replaceLastOccurrence(editor, unit, next, s.flow === "enhance");
@@ -341,13 +363,13 @@ export default function App() {
             setStatus(s.flow === "enhance" ? "Line enhanced. Tab keeps the next words." : "Line fixed. Tab keeps the next words.");
           }
         } catch (e) {
-          if (gen !== genRef.current) return;
+          if (gen !== flowGenRef.current || isAbortError(e)) return;
           setError(e instanceof Error ? e.message : String(e));
         }
       }
     }
 
-    if (s.flow === "off" || gen !== genRef.current) return;
+    if (s.flow === "off" || gen !== flowGenRef.current || workshopBusyRef.current) return;
     await runFlow(editor.getText(), gen, ac, briefRef.current);
   }
   onPauseRef.current = onPause;
@@ -360,15 +382,14 @@ export default function App() {
     try {
       let acc = "";
       await flowContinue(s, text, (chunk) => {
-        if (gen !== genRef.current) return;
+        if (gen !== flowGenRef.current) return;
         acc += chunk;
         editor.commands.setFlowGhost(killEmDashes(acc).replace(/\s+/g, " ").replace(/^[\s,.;:]+/, ""));
       }, ac.signal, brief);
-      if (gen !== genRef.current || ac.signal.aborted) return;
+      if (gen !== flowGenRef.current || ac.signal.aborted) return;
       setStatus(acc.trim() ? "Tab to keep the line. Esc to dismiss." : "Flow is listening.");
     } catch (e) {
-      if (gen !== genRef.current) return;
-      if (e instanceof Error && e.name === "AbortError") return;
+      if (gen !== flowGenRef.current || isAbortError(e)) return;
       setError(e instanceof Error ? e.message : String(e));
       setStatus("Flow paused.");
     }
@@ -389,10 +410,11 @@ export default function App() {
     const selectedNorm = selected.replace(/\s+/g, " ").trim();
     const wholePage = Boolean(selectedNorm) && selectedNorm === pageText;
     const backup = editor.getHTML();
+    busyRef.current = true;
     setBusy(true);
     setError("");
     setStatus("Writing…");
-    abortRef.current?.abort();
+    flowAbortRef.current?.abort();
     applyingRef.current = true;
     editor.commands.clearFlowGhost();
     try {
@@ -428,6 +450,7 @@ export default function App() {
       setStatus("Your page is unchanged.");
     } finally {
       applyingRef.current = false;
+      busyRef.current = false;
       setBusy(false);
       setPalette(false);
       setSel(null);
@@ -596,20 +619,26 @@ export default function App() {
     }
     const prior = (snapshot().find((d) => d.id === activeId)?.workshop ?? []).slice();
     const userTurn: WorkshopTurn = { role: "user", content: q };
-    const draftTurns = [...prior, userTurn, { role: "assistant" as const, content: "" }];
-    setLiveWorkshop(draftTurns);
+    setLiveWorkshop([...prior, userTurn, { role: "assistant", content: "" }]);
     setWorkshopInput("");
+    workshopBusyRef.current = true;
     setWorkshopBusy(true);
     setRailTab("workshop");
     setError("");
     setStatus("Workshop is on the line…");
-    const gen = ++genRef.current;
-    abortRef.current?.abort();
+    flowAbortRef.current?.abort();
+    if (flowTimer.current) window.clearTimeout(flowTimer.current);
+    const job = ++jobGenRef.current;
+    jobAbortRef.current?.abort();
     const ac = new AbortController();
-    abortRef.current = ac;
+    jobAbortRef.current = ac;
     let acc = "";
-    try {
-      await workshopChat(
+    const paint = () => {
+      if (job !== jobGenRef.current) return;
+      setLiveWorkshop([...prior, userTurn, { role: "assistant", content: killEmDashes(acc) }]);
+    };
+    const ask = () =>
+      workshopChat(
         s,
         {
           page: pagePlain(editor),
@@ -619,25 +648,48 @@ export default function App() {
           question: q,
         },
         (chunk) => {
-          if (gen !== genRef.current) return;
+          if (job !== jobGenRef.current) return;
           acc += chunk;
-          setLiveWorkshop([...prior, userTurn, { role: "assistant", content: killEmDashes(acc) }]);
+          paint();
         },
         ac.signal,
       );
-      if (gen !== genRef.current) return;
-      const done = [...prior, userTurn, { role: "assistant" as const, content: killEmDashes(acc).trim() || "Nothing came back." }];
-      setWorkshop(done);
+    try {
+      await ask();
+      if (job !== jobGenRef.current) return;
+      if (!acc.trim() && !ac.signal.aborted) {
+        acc = "";
+        await ask();
+      }
+      if (job !== jobGenRef.current) return;
+      const text = killEmDashes(acc).trim() || "Nothing came back. Ask again.";
+      setWorkshop([...prior, userTurn, { role: "assistant", content: text }]);
       setLiveWorkshop(null);
       setStatus("Workshop answered. The page didn't move.");
     } catch (e) {
-      if (e instanceof Error && e.name === "AbortError") return;
+      if (job !== jobGenRef.current) return;
+      if (isAbortError(e)) {
+        const partial = killEmDashes(acc).trim();
+        setWorkshop([...prior, userTurn, { role: "assistant", content: partial || "(stopped before a reply.)" }]);
+        setLiveWorkshop(null);
+        setStatus("Workshop stopped.");
+        return;
+      }
+      const msg = e instanceof Error ? e.message : String(e);
+      setWorkshop([...prior, userTurn, { role: "assistant", content: `Couldn't answer. ${msg}` }]);
       setLiveWorkshop(null);
-      setError(e instanceof Error ? e.message : String(e));
+      setError(msg);
       setStatus("Workshop paused.");
     } finally {
-      setWorkshopBusy(false);
+      if (job === jobGenRef.current) {
+        workshopBusyRef.current = false;
+        setWorkshopBusy(false);
+      }
     }
+  }
+
+  function stopWorkshop() {
+    jobAbortRef.current?.abort();
   }
 
   function killDashesNow() {
@@ -653,6 +705,172 @@ export default function App() {
     if (!editor || !text.trim()) return;
     insertAiContent(editor, proseToHtml(killEmDashes(text)));
     setStatus("Dropped onto the page.");
+  }
+
+  function copyTurn(text: string) {
+    void navigator.clipboard.writeText(text).then(
+      () => setStatus("Copied."),
+      () => setStatus("Couldn't copy."),
+    );
+  }
+
+  async function exportThisChat() {
+    const turns = liveWorkshop ?? activeDoc?.workshop ?? [];
+    if (!turns.length) {
+      setError("No Workshop log on this page.");
+      return;
+    }
+    const ok = await downloadText(`${activeDoc?.title || "Workshop"}-workshop`, workshopMarkdown(activeDoc?.title || "Untitled", turns, activeDoc?.updatedAt));
+    if (ok) setStatus("Workshop log exported.");
+  }
+
+  async function exportAllChats() {
+    const n = workshopCount(docs);
+    if (!n) {
+      setError("No Workshop logs to export.");
+      return;
+    }
+    const ok = await downloadText("copywriteprime-workshop-logs", allWorkshopMarkdown(docs));
+    if (ok) {
+      setStatus(`Exported ${n} Workshop log${n === 1 ? "" : "s"}.`);
+      setLogsOpen(false);
+    }
+  }
+
+  async function exportArchive() {
+    const n = docs.filter((d) => d.archivedAt).length;
+    if (!n) {
+      setError("Archive is empty.");
+      return;
+    }
+    const ok = await downloadText("copywriteprime-archive", archiveMarkdown(docs));
+    if (ok) {
+      setStatus(`Exported ${n} archived page${n === 1 ? "" : "s"}.`);
+      setLogsOpen(false);
+    }
+  }
+
+  async function exportPages() {
+    const ok = await downloadText("copywriteprime-pages", pagesMarkdown(docs));
+    if (ok) {
+      setStatus("Pages exported.");
+      setLogsOpen(false);
+    }
+  }
+
+  function clearThisChat() {
+    if (!(activeDoc?.workshop?.length || liveWorkshop?.length)) return;
+    if (!window.confirm("Delete this page's Workshop log?")) return;
+    jobAbortRef.current?.abort();
+    setLiveWorkshop(null);
+    setWorkshop([]);
+    setStatus("Workshop log cleared.");
+  }
+
+  function deleteAllChats() {
+    const n = workshopCount(docs);
+    if (!n) return;
+    if (!window.confirm(`Delete every Workshop log (${n} chat${n === 1 ? "" : "s"}, ${turnCount(docs)} turns)? This does not touch the pages.`)) return;
+    jobAbortRef.current?.abort();
+    setLiveWorkshop(null);
+    const next = snapshot().map((d) => ({ ...d, workshop: undefined, updatedAt: Date.now() }));
+    void persist(next);
+    setLogsOpen(false);
+    setStatus("All Workshop logs deleted.");
+  }
+
+  function emptyArchive() {
+    const n = docs.filter((d) => d.archivedAt).length;
+    if (!n) return;
+    if (!window.confirm(`Delete ${n} archived page${n === 1 ? "" : "s"} forever?`)) return;
+    const remaining = snapshot().filter((d) => !d.archivedAt);
+    if (!remaining.length) {
+      setError("Keep at least one live page. Restore something first, or delete archive items one by one.");
+      return;
+    }
+    if (activeDoc?.archivedAt) {
+      const fallback = remaining[0];
+      editor?.commands.setContent(fallback.html, { emitUpdate: false });
+      setActiveId(fallback.id);
+      void persist(remaining, fallback.id);
+    } else {
+      void persist(remaining);
+    }
+    setLogsOpen(false);
+    setStatus("Archive emptied.");
+  }
+
+  async function learnVoice(files: CorpusFile[], sourceLabel: string) {
+    if (!files.length) {
+      setError("No readable writing in that set. PDF, Word, .txt, .md, .html.");
+      return;
+    }
+    setVoiceBusy(true);
+    setRailTab("voice");
+    setError("");
+    setStatus(`Reading ${files.length} file${files.length === 1 ? "" : "s"}…`);
+    try {
+      const corpus = joinCorpus(files);
+      const s = settingsRef.current;
+      let distilled = "";
+      try {
+        if (hasKey(s)) distilled = await distillVoice(s, corpus);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+      const profile = buildVoiceProfile({
+        text: corpus,
+        samples: samplesOf(files),
+        sourceLabel,
+        distilled,
+      });
+      await patchSettings({ voice: profile, voiceEnabled: true });
+      setStatus(`Voice locked from ${files.length} file${files.length === 1 ? "" : "s"} · ${profile.wordCount.toLocaleString()} words.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setVoiceBusy(false);
+    }
+  }
+
+  async function scanVoiceFolder() {
+    setVoiceBusy(true);
+    setError("");
+    try {
+      const picked = await pickWritingFolder();
+      if (picked && picked.length) {
+        await learnVoice(picked, "folder");
+        return;
+      }
+      if (picked && picked.length === 0) {
+        setError("That folder had no readable writing.");
+        setVoiceBusy(false);
+        return;
+      }
+      folderRef.current?.click();
+      setVoiceBusy(false);
+    } catch (e) {
+      setVoiceBusy(false);
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function learnFromPages() {
+    const files: CorpusFile[] = docs
+      .filter((d) => !d.archivedAt)
+      .map((d) => {
+        const text = docPlain(d.html);
+        return { name: d.title || "Untitled", text, words: text.split(/\s+/).filter(Boolean).length };
+      })
+      .filter((f) => f.words >= 20);
+    await learnVoice(files, "pages");
+  }
+
+  async function forgetVoice() {
+    if (!settings.voice) return;
+    if (!window.confirm("Forget the learned voice?")) return;
+    await patchSettings({ voice: null });
+    setStatus("Voice cleared. Flow is generic again.");
   }
 
   function attachBrief(brief: Brief) {
@@ -693,13 +911,16 @@ export default function App() {
       setError("Add a model key to complete a paper.");
       return;
     }
+    busyRef.current = true;
     setBusy(true);
     setScanOpen(false);
     setError("");
-    const gen = ++genRef.current;
-    abortRef.current?.abort();
+    flowAbortRef.current?.abort();
+    if (flowTimer.current) window.clearTimeout(flowTimer.current);
+    const job = ++jobGenRef.current;
+    jobAbortRef.current?.abort();
     const ac = new AbortController();
-    abortRef.current = ac;
+    jobAbortRef.current = ac;
     applyingRef.current = true;
     editor.commands.clearFlowGhost();
     setStatus("Reading the paper. Completing onto the page…");
@@ -714,20 +935,21 @@ export default function App() {
     };
     try {
       await completeFromBrief(s, text, existing, (chunk) => {
-        if (gen !== genRef.current) return;
+        if (job !== jobGenRef.current) return;
         acc += chunk;
         paint();
       }, ac.signal);
-      if (gen !== genRef.current) return;
+      if (job !== jobGenRef.current) return;
       paint(true);
       markDocAsAi(editor);
       setStatus("On the page. Gold is AI. Edit from here. Flow still has the brief.");
     } catch (e) {
-      if (e instanceof Error && e.name === "AbortError") return;
+      if (isAbortError(e)) return;
       setError(e instanceof Error ? e.message : String(e));
       setStatus("Complete paused.");
     } finally {
       applyingRef.current = false;
+      busyRef.current = false;
       setBusy(false);
     }
   }
@@ -840,6 +1062,7 @@ export default function App() {
         setPalette(false);
         setSettingsOpen(false);
         setScanOpen(false);
+        setLogsOpen(false);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -902,6 +1125,12 @@ export default function App() {
           </button>
           <button className={`ghost ${railTab === "workshop" ? "on" : ""}`} onClick={openWorkshop}>
             Workshop
+          </button>
+          <button className={`ghost ${railTab === "voice" ? "on" : ""} ${settings.voiceEnabled && settings.voice ? "lit" : ""}`} onClick={() => setRailTab("voice")}>
+            Voice
+          </button>
+          <button className={`ghost ${logsOpen ? "on" : ""}`} onClick={() => setLogsOpen(true)}>
+            Logs
           </button>
           <button className="ghost" onClick={() => void onExport()}>
             Word
@@ -971,6 +1200,9 @@ export default function App() {
           </button>
           <button className="rail-btn" onClick={() => archiveDoc(activeId)}>
             Archive this page
+          </button>
+          <button className="rail-btn" onClick={() => setLogsOpen(true)}>
+            Export / delete logs
           </button>
           <button className="rail-btn" onClick={() => setScanOpen(true)}>
             Scan a paper
@@ -1047,18 +1279,27 @@ export default function App() {
             <span>
               {error ? <span className="err">{error}</span> : status}{" "}
               {!hasKey(settings) && <b> · add a key to unlock Flow</b>}
+              {settings.voiceEnabled && settings.voice && (
+                <b>
+                  {" "}
+                  · voice on · {settings.voice.wordCount.toLocaleString()} words
+                </b>
+              )}
             </span>
             <span>{words} words</span>
           </div>
         </main>
 
-        <aside className={`guard ${railTab === "workshop" ? "workshop-open" : ""}`}>
+        <aside className={`guard ${railTab !== "flow" ? "workshop-open" : ""}`}>
           <div className="toggles" style={{ padding: 0, marginBottom: 12 }}>
             <button className={railTab === "flow" ? "active" : ""} onClick={() => setRailTab("flow")}>
               Flow
             </button>
             <button className={railTab === "workshop" ? "active" : ""} onClick={openWorkshop}>
               Workshop
+            </button>
+            <button className={railTab === "voice" ? "active" : ""} onClick={() => setRailTab("voice")}>
+              Voice
             </button>
           </div>
           {railTab === "workshop" ? (
@@ -1067,24 +1308,46 @@ export default function App() {
                 Argue the line. The page stays put until you drop a rewrite.
                 {sel?.text ? ` Using: “${sel.text.replace(/\s+/g, " ").trim().slice(0, 80)}${sel.text.length > 80 ? "…" : ""}”` : " Reading the whole page."}
               </p>
-              <details className="workshop-page" open>
+              <div className="log-bar">
+                <button className="doc-mini" onClick={() => void exportThisChat()}>
+                  Export
+                </button>
+                <button className="doc-mini" onClick={clearThisChat}>
+                  Delete
+                </button>
+                <button className="doc-mini" onClick={() => setLogsOpen(true)}>
+                  All logs
+                </button>
+              </div>
+              <details className="workshop-page">
                 <summary>On the page · {words} words</summary>
                 <pre>{pagePlain(editor) || "(empty. Write on the paper, then ask.)"}</pre>
               </details>
               <div className="workshop-log">
                 {((liveWorkshop ?? activeDoc?.workshop) ?? []).length === 0 && (
-                  <p className="kit" style={{ paddingLeft: 0 }}>
-                    Ask anything. “Should I spell out $349?” “Is this headline doing the job?”
-                  </p>
+                  <div className="empty-log">
+                    <p>Ask anything. “Should I spell out $349?” “Is this headline doing the job?”</p>
+                    <p>Typing on the page no longer kills the reply.</p>
+                  </div>
                 )}
-                {((liveWorkshop ?? activeDoc?.workshop) ?? []).map((turn, i) => (
+                {((liveWorkshop ?? activeDoc?.workshop) ?? []).map((turn, i, all) => (
                   <div key={`${turn.role}-${i}`} className={`workshop-turn ${turn.role}`}>
                     <span className="label">{turn.role === "user" ? "You" : "Workshop"}</span>
-                    <p>{turn.content}</p>
+                    <p>
+                      {turn.content}
+                      {workshopBusy && turn.role === "assistant" && i === all.length - 1 && !turn.content.trim() ? (
+                        <span className="pulse">Listening…</span>
+                      ) : null}
+                    </p>
                     {turn.role === "assistant" && turn.content.trim() && (
-                      <button className="rail-btn" onClick={() => insertWorkshop(turn.content)}>
-                        Drop on page
-                      </button>
+                      <div className="turn-actions">
+                        <button className="rail-btn" onClick={() => insertWorkshop(turn.content)}>
+                          Drop on page
+                        </button>
+                        <button className="rail-btn" onClick={() => copyTurn(turn.content)}>
+                          Copy
+                        </button>
+                      </div>
                     )}
                   </div>
                 ))}
@@ -1104,9 +1367,68 @@ export default function App() {
                   }
                 }}
               />
-              <button className="rail-btn" disabled={workshopBusy || !workshopInput.trim()} onClick={() => void runWorkshop()}>
-                {workshopBusy ? "Thinking…" : "Ask"}
+              <div className="ask-row">
+                {workshopBusy ? (
+                  <button className="rail-btn" onClick={stopWorkshop}>
+                    Stop
+                  </button>
+                ) : (
+                  <button className="rail-btn" disabled={!workshopInput.trim()} onClick={() => void runWorkshop()}>
+                    Ask
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : railTab === "voice" ? (
+            <div className="voice-pane">
+              <h2>Voice harness</h2>
+              <p className="kit" style={{ paddingLeft: 0 }}>
+                Scan a folder of past work, or learn from these pages. Flow, Workshop, Enhance, and Complete write like that person.
+              </p>
+              <div className="toggles" style={{ padding: 0, margin: "12px 0" }}>
+                <button
+                  className={settings.voiceEnabled && settings.voice ? "active" : ""}
+                  onClick={() => void patchSettings({ voiceEnabled: !settings.voiceEnabled })}
+                >
+                  Write like me {settings.voiceEnabled ? "on" : "off"}
+                </button>
+              </div>
+              {settings.voice ? (
+                <div className="voice-card">
+                  <div className="voice-meta">
+                    {settings.voice.wordCount.toLocaleString()} words · {settings.voice.samples.length} files · {settings.voice.sourceLabel}
+                  </div>
+                  <div className="trait-row">
+                    <span>{settings.voice.traits.sentence}</span>
+                    <span>{settings.voice.traits.person}</span>
+                    <span>{settings.voice.traits.energy}</span>
+                    <span>{settings.voice.traits.diction}</span>
+                  </div>
+                  <pre>{settings.voice.card}</pre>
+                </div>
+              ) : (
+                <p className="kit" style={{ paddingLeft: 0 }}>
+                  No voice yet. Drop a folder of ads, decks, emails, or papers. The agent reads how they punch a line.
+                </p>
+              )}
+              <button className="rail-btn" disabled={voiceBusy} onClick={() => void scanVoiceFolder()}>
+                {voiceBusy ? "Reading…" : "Scan a folder"}
               </button>
+              <button className="rail-btn" disabled={voiceBusy} onClick={() => void learnFromPages()}>
+                Learn from these pages
+              </button>
+              <button className="rail-btn" disabled={!settings.voice} onClick={() => void forgetVoice()}>
+                Forget voice
+              </button>
+              {settings.voice && settings.voice.samples.length > 0 && (
+                <ul className="sample-list">
+                  {settings.voice.samples.slice(0, 12).map((s) => (
+                    <li key={s.name}>
+                      {s.name} <small>{s.words.toLocaleString()}w</small>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           ) : (
             <>
@@ -1340,6 +1662,70 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {logsOpen && (
+        <div className="modal-backdrop" onMouseDown={() => setLogsOpen(false)}>
+          <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
+            <h3>Logs</h3>
+            <p className="lead">
+              Export what you want to keep. Delete what you don’t. Pages stay unless you empty the archive.
+            </p>
+            <div className="log-block">
+              <h4>This Workshop chat</h4>
+              <p>
+                {(activeDoc?.workshop?.length ?? liveWorkshop?.length ?? 0)} turn
+                {(activeDoc?.workshop?.length ?? liveWorkshop?.length ?? 0) === 1 ? "" : "s"} on this page
+              </p>
+              <div className="toggles" style={{ padding: "8px 0 0" }}>
+                <button className="active" onClick={() => void exportThisChat()}>
+                  Export this chat
+                </button>
+                <button onClick={clearThisChat}>Delete this chat</button>
+              </div>
+            </div>
+            <div className="log-block">
+              <h4>Every Workshop chat</h4>
+              <p>
+                {workshopCount(docs)} chat{workshopCount(docs) === 1 ? "" : "s"} · {turnCount(docs)} turns
+              </p>
+              <div className="toggles" style={{ padding: "8px 0 0" }}>
+                <button className="active" onClick={() => void exportAllChats()}>
+                  Export all chats
+                </button>
+                <button onClick={deleteAllChats}>Delete all chats</button>
+              </div>
+            </div>
+            <div className="log-block">
+              <h4>Pages</h4>
+              <p>
+                {docs.filter((d) => !d.archivedAt).length} live · {docs.filter((d) => d.archivedAt).length} archived
+              </p>
+              <div className="toggles" style={{ padding: "8px 0 0" }}>
+                <button onClick={() => void exportPages()}>Export live pages</button>
+                <button onClick={() => void exportArchive()}>Export archive</button>
+                <button onClick={emptyArchive}>Delete all archived</button>
+              </div>
+            </div>
+            <div className="toggles">
+              <button onClick={() => setLogsOpen(false)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <input
+        ref={folderRef}
+        type="file"
+        multiple
+        hidden
+        {...{ webkitdirectory: "", directory: "" }}
+        onChange={(e) => {
+          const list = e.target.files;
+          e.target.value = "";
+          if (!list || !list.length) return;
+          void filesFromList(list).then((files) => learnVoice(files, "folder"));
+        }}
+      />
     </div>
   );
 }

@@ -2,7 +2,7 @@
 
 A desktop writing studio that stays in the sentence with you.
 
-You type messy. **Flow** waits for the pause, fixes the line, lifts it, then ghosts the next words. **Tab** keeps them. **⌘K** drops a prompt on the page. **Scan** a paper — PDF, Word, or paste — and **Complete** writes the submission onto the page. **Workshop** argues the line without moving the page, and it can read what’s already written. Gold on the page is AI. **Clear & archive** files a finished page. One click exports **Word**: Times New Roman 12, double-spaced, 1-inch margins. Em dashes are stripped on the way out.
+You type messy. **Flow** waits for the pause, fixes the line, lifts it, then ghosts the next words. **Tab** keeps them. **⌘K** drops a prompt on the page. **Scan** a paper — PDF, Word, or paste — and **Complete** writes the submission onto the page. **Workshop** argues the line without moving the page, and it can read what’s already written. **Voice** scans a folder of past work and writes like that person. **Logs** exports or deletes chats. Gold on the page is AI. **Clear & archive** files a finished page. One click exports **Word**: Times New Roman 12, double-spaced, 1-inch margins. Em dashes are stripped on the way out.
 
 Bring your own keys. OpenAI, Anthropic, Gemini, Groq, xAI, Mistral, DeepSeek, OpenRouter, Together, Fireworks, Perplexity, Cohere, **Ollama local**, **Ollama Cloud**, and any OpenAI-compatible endpoint. Keys live in local Tauri store. Not our servers — there are no servers.
 
@@ -23,7 +23,15 @@ Type bar: **B I U**, **HL** (your highlighter), **AI** (show/hide gold marks), H
 
 ## Workshop
 
-A copy chief in the right rail. It reads the page that’s already written — **On the page** shows you the same text. Ask about a line without moving the draft. **⌘J** opens it. Highlight a sentence and hit **Workshop** on the bar to bring that line in. **Drop on page** only when you want the rewrite. Dropped lines land in gold.
+A copy chief in the right rail. It reads the page that’s already written — **On the page** shows you the same text. Ask about a line without moving the draft. **⌘J** opens it. Highlight a sentence and hit **Workshop** on the bar to bring that line in. **Drop on page** only when you want the rewrite. Dropped lines land in gold. **Stop** cancels a reply without losing your question. Typing on the page no longer kills the answer.
+
+## Voice
+
+Point the harness at a folder of past work (PDF, Word, `.txt`, `.md`, `.html`) or learn from the pages already in CopyWritePrime. It builds a voice card: sentence length, person, rhythm, diction. **Write like me** injects that card into Flow, Workshop, Enhance, and Complete. Toggle it off without forgetting the profile.
+
+## Logs
+
+**Logs** in the titlebar, or **Export / delete logs** in Pages. Export this Workshop chat, every chat, live pages, or the archive as Markdown. Delete this chat, every chat, or empty the archive. Export first if you want a copy.
 
 ## Scan
 
@@ -58,8 +66,8 @@ Installers land in `src-tauri/target/release/bundle/`.
 ## Releases
 
 ```bash
-git tag v0.5.1
-git push origin v0.5.1
+git tag v0.6.0
+git push origin v0.6.0
 ```
 
 GitHub Actions builds Windows, macOS (Intel + Apple Silicon), and Linux.

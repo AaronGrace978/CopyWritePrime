@@ -1,5 +1,6 @@
 import { httpFetch } from "./http";
 import { OLLAMA_CLOUD_MODELS, OLLAMA_LOCAL_MODELS } from "./ollamaCatalog";
+import { consumeNdjson } from "./sse";
 import type { ChatMessage, Settings } from "./types";
 import type { ProviderId } from "./providers";
 
@@ -56,33 +57,20 @@ async function readNdjson(
   const decoder = new TextDecoder();
   let buffer = "";
   let full = "";
+  const eat = (chunk: string, flush: boolean) => {
+    const next = consumeNdjson(buffer + chunk, flush);
+    buffer = next.rest;
+    for (const piece of next.pieces) {
+      full += piece;
+      onDelta(piece);
+    }
+  };
   while (true) {
     const { value, done } = await reader.read();
     if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split(/\r?\n/);
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      try {
-        const json = JSON.parse(trimmed) as {
-          message?: { content?: string };
-          error?: string;
-          done?: boolean;
-        };
-        if (json.error) throw new Error(json.error);
-        const piece = json.message?.content;
-        if (piece) {
-          full += piece;
-          onDelta(piece);
-        }
-      } catch (e) {
-        if (e instanceof SyntaxError) continue;
-        throw e;
-      }
-    }
+    eat(decoder.decode(value, { stream: true }), false);
   }
+  eat(decoder.decode(), true);
   return full;
 }
 

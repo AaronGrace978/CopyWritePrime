@@ -1,13 +1,14 @@
 {
   "name": "copywriteprime",
   "private": true,
-  "version": "0.5.1",
+  "version": "0.6.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "test": "node --experimental-strip-types --test src/lib/*.test.ts",
     "assessment:docx": "node scripts/build-assessment-docx.mjs"
   },
   "dependencies": {

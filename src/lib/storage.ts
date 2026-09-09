@@ -59,6 +59,8 @@ export async function loadSettings(): Promise<Settings> {
     typeScale: normalizeTypeScale((saved as Settings & { typeScale?: unknown }).typeScale),
     autoCorrect: saved.autoCorrect !== false,
     showAiMarks: saved.showAiMarks !== false,
+    voiceEnabled: saved.voiceEnabled !== false,
+    voice: saved.voice ?? null,
   };
 }
 
