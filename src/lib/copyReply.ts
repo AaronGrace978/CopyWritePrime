@@ -1,17 +1,36 @@
 /**
  * Models sometimes dump the plan onto the page: think tags, "let me restructure",
- * paragraph-by-paragraph notes. Fix/Enhance must land only the copy.
+ * paragraph-by-paragraph notes, or the word NOOP from the old polish prompt.
+ * Fix/Enhance must land only the copy.
  */
 
 const THINK_BLOCK = /<(?:think|thinking)>[\s\S]*?<\/(?:think|thinking)>\s*/gi;
 const CUT_MARKER =
   /(?:^|\n)\s*(?:the (?:fixed |final )?(?:cut|copy)|here(?:'s| is) (?:the )?(?:fixed |final )?(?:cut|copy|page))\s*:\s*\n+/i;
 const PLAN_HINT =
-  /\b(the user wants|let me |paragraph \d|fix the broken|hmm,?|wait,?|i'll bold|no commentary|restructure|clean, keep|return only the|thinking out loud)\b/i;
+  /\b(the user wants|let me |paragraph \d|fix the broken|hmm,?|wait,?|i'll bold|no commentary|restructure|clean, keep|return only the|thinking out loud|the task:?|fixes needed|original text:|first character of|keep voice|don't explain|do not explain|don't add ideas|don't get fancier|return exactly noop|no em dashes|horizontal bars?|as a pause)\b/i;
 
 function firstLineStart(source: string): string {
   const line = source.trim().split(/\n/)[0]?.trim() ?? "";
   return line.slice(0, 48);
+}
+
+function startsLikeSource(text: string, source: string): boolean {
+  const start = firstLineStart(source);
+  if (start.length < 16) return false;
+  return text.trim().startsWith(start.slice(0, 16));
+}
+
+function isQuotedOriginal(out: string, source: string): boolean {
+  if (!source.trim()) return false;
+  const a = out.replace(/^["“”']+|["“”']+$/g, "").trim();
+  const b = source.trim();
+  if (!a || a.length < 24) return false;
+  return b.startsWith(a) && a.length < b.length;
+}
+
+export function looksLikePlanning(text: string): boolean {
+  return PLAN_HINT.test(text);
 }
 
 export function stripLeakedThinking(text: string, source = ""): string {
@@ -20,6 +39,8 @@ export function stripLeakedThinking(text: string, source = ""): string {
     .replace(THINK_BLOCK, "")
     .replace(/<\/?(?:think|thinking)>/gi, "")
     .trim();
+
+  if (/^noop\s*$/i.test(out)) return "";
 
   const marked = out.search(CUT_MARKER);
   if (marked >= 0) {
@@ -35,5 +56,9 @@ export function stripLeakedThinking(text: string, source = ""): string {
     }
   }
 
-  return out.trim();
+  out = out.trim();
+  if (!out) return "";
+  if (isQuotedOriginal(out, source)) return "";
+  if (PLAN_HINT.test(out) && !startsLikeSource(out, source)) return "";
+  return out;
 }

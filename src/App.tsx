@@ -22,7 +22,7 @@ import {
   type Settings,
 } from "./lib/llm";
 import { isAbortError } from "./lib/abort";
-import { stripLeakedThinking } from "./lib/copyReply";
+import { looksLikePlanning, stripLeakedThinking } from "./lib/copyReply";
 import { killEmDashes } from "./lib/dashes";
 import { filesFromList, joinCorpus, pickWritingFolder, samplesOf, type CorpusFile } from "./lib/corpus";
 import { downloadText } from "./lib/download";
@@ -419,7 +419,7 @@ export default function App() {
           ? await enhanceSentence(s, unit, ac.signal)
           : await polishSentence(s, unit, ac.signal);
       if (gen !== flowGenRef.current) return;
-      if (next && next.trim() && next.trim() !== unit) {
+      if (next && next.trim() && next.trim() !== unit && !looksLikePlanning(next)) {
         const cut = killEmDashes(next).trim();
         setWatchSource(unit);
         setWatchSuggestion(cut);
@@ -433,7 +433,7 @@ export default function App() {
         );
       } else {
         setWatchPhase("idle");
-        setStatus("Last paragraph looks clean. Still watching.");
+        setStatus("No usable suggestion this pause. The page did not move.");
       }
     } catch (e) {
       if (gen !== flowGenRef.current || isAbortError(e)) return;

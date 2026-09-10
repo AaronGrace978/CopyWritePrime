@@ -55,7 +55,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "CopyWritePrime ${{ github.ref_name }}"
-          releaseBody: "Flow watches from the rail and never overwrites while you type. Add or replace a paragraph on click. Fix no longer dumps the model's plan onto the page."
+          releaseBody: "Watch no longer shows the model's homework. Suggestions that restate the Fix prompt are dropped. Polish gets enough tokens to return the paragraph."
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}

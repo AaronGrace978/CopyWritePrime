@@ -15,7 +15,7 @@ import {
 import { readStream, watchdog, type StreamBatch, type StreamHandlers, type StreamResult } from "./stream";
 import { DEFAULT_SETTINGS, normalizeFlow, normalizeTypeScale, type ChatMessage, type Settings } from "./types";
 import { excerptCorpus } from "./voice";
-import { stripLeakedThinking } from "./copyReply";
+import { looksLikePlanning, stripLeakedThinking } from "./copyReply";
 
 export type { ChatMessage, Settings };
 export { DEFAULT_SETTINGS, normalizeFlow, normalizeTypeScale };
@@ -314,28 +314,33 @@ export async function flowContinue(
   });
 }
 
+function copyBudget(source: string, floor: number) {
+  const words = source.trim().split(/\s+/).filter(Boolean).length;
+  return Math.min(2000, Math.max(floor, words * 4 + 120));
+}
+
 export async function polishSentence(settings: Settings, sentence: string, signal?: AbortSignal) {
   let out = "";
   await streamChat({
     settings: copyJob(settings),
-    maxTokens: 160,
+    maxTokens: copyBudget(sentence, 400),
     temperature: 0.1,
     signal,
     messages: [
       {
         role: "system",
         content: writerSystem(
-          "This writer types fast and messy. Fix spelling, grammar, missing words, and punctuation. Keep their voice, slang, and rhythm. Do not add ideas. Do not get fancier. Do not plan. Do not explain the edit. If it is already correct, return exactly NOOP. The first character of your reply is the first character of the corrected sentence, or NOOP.",
+          "This writer types fast and messy. Fix spelling, grammar, missing words, and punctuation. Keep their voice, slang, and rhythm. Do not add ideas. Do not get fancier. Do not plan. Do not explain the edit. Do not mention instructions. If it is already correct, return the original unchanged. The first character of your reply is the first character of the sentence.",
         ),
       },
-      { role: "user", content: sentence },
+      { role: "user", content: `Paragraph:\n${sentence}\n\nReply with the paragraph only.` },
     ],
     onDelta: (c) => {
       out += c;
     },
   });
   const cleaned = cleanModelText(out, sentence);
-  if (!cleaned || cleaned === "NOOP" || cleaned === sentence.trim()) return null;
+  if (!cleaned || /^noop$/i.test(cleaned) || cleaned === sentence.trim() || looksLikePlanning(cleaned)) return null;
   return cleaned;
 }
 
@@ -343,24 +348,24 @@ export async function enhanceSentence(settings: Settings, sentence: string, sign
   let out = "";
   await streamChat({
     settings: copyJob(settings),
-    maxTokens: 220,
+    maxTokens: copyBudget(sentence, 500),
     temperature: 0.35,
     signal,
     messages: [
       {
         role: "system",
         content: writerSystem(
-          "This writer types fast and messy. First fix errors. Then make the line one notch clearer and more specific. Same person, same meaning. You may mark one or two punch words with **bold**. No extra sentences. No slogans. Do not plan. Do not explain the edit. If it is already strong and clean, return exactly NOOP. The first character of your reply is the first character of the line, or NOOP.",
+          "This writer types fast and messy. First fix errors. Then make the line one notch clearer and more specific. Same person, same meaning. You may mark one or two punch words with **bold**. No extra sentences. No slogans. Do not plan. Do not explain the edit. Do not mention instructions. If it is already strong and clean, return the original unchanged. The first character of your reply is the first character of the line.",
         ),
       },
-      { role: "user", content: sentence },
+      { role: "user", content: `Paragraph:\n${sentence}\n\nReply with the paragraph only.` },
     ],
     onDelta: (c) => {
       out += c;
     },
   });
   const cleaned = cleanModelText(out, sentence);
-  if (!cleaned || cleaned === "NOOP" || cleaned === sentence.trim()) return null;
+  if (!cleaned || /^noop$/i.test(cleaned) || cleaned === sentence.trim() || looksLikePlanning(cleaned)) return null;
   return cleaned;
 }
 
@@ -388,7 +393,9 @@ export async function transform(settings: Settings, instruction: string, source:
       out += c;
     },
   });
-  return cleanModelText(out, source);
+  const cleaned = cleanModelText(out, source);
+  if (looksLikePlanning(cleaned)) return "";
+  return cleaned;
 }
 
 export async function completeFromBrief(
