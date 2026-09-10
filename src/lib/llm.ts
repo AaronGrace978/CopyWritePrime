@@ -325,7 +325,7 @@ export async function polishSentence(settings: Settings, sentence: string, signa
       {
         role: "system",
         content: writerSystem(
-          "This writer types fast and messy. Fix spelling, grammar, missing words, and punctuation. Keep their voice, slang, and rhythm. Do not add ideas. Do not get fancier. Do not plan. Do not explain the edit. If it is already correct, return exactly NOOP. The first character of your reply is the first character of the corrected sentence, or NOOP.",
+          "This writer types fast and messy. Fix spelling, grammar, missing words, and punctuation. Keep their voice, slang, and rhythm. Do not add ideas. Do not get fancier. Do not plan. Do not explain the edit. Do not mention instructions. If it is already correct, return the original unchanged. The first character of your reply is the first character of the sentence.",
         ),
       },
       { role: "user", content: sentence },
@@ -335,7 +335,7 @@ export async function polishSentence(settings: Settings, sentence: string, signa
     },
   });
   const cleaned = cleanModelText(out, sentence);
-  if (!cleaned || cleaned === "NOOP" || cleaned === sentence.trim()) return null;
+  if (!cleaned || /^noop$/i.test(cleaned) || cleaned === sentence.trim()) return null;
   return cleaned;
 }
 
@@ -350,7 +350,7 @@ export async function enhanceSentence(settings: Settings, sentence: string, sign
       {
         role: "system",
         content: writerSystem(
-          "This writer types fast and messy. First fix errors. Then make the line one notch clearer and more specific. Same person, same meaning. You may mark one or two punch words with **bold**. No extra sentences. No slogans. Do not plan. Do not explain the edit. If it is already strong and clean, return exactly NOOP. The first character of your reply is the first character of the line, or NOOP.",
+          "This writer types fast and messy. First fix errors. Then make the line one notch clearer and more specific. Same person, same meaning. You may mark one or two punch words with **bold**. No extra sentences. No slogans. Do not plan. Do not explain the edit. Do not mention instructions. If it is already strong and clean, return the original unchanged. The first character of your reply is the first character of the line.",
         ),
       },
       { role: "user", content: sentence },
@@ -360,7 +360,7 @@ export async function enhanceSentence(settings: Settings, sentence: string, sign
     },
   });
   const cleaned = cleanModelText(out, sentence);
-  if (!cleaned || cleaned === "NOOP" || cleaned === sentence.trim()) return null;
+  if (!cleaned || /^noop$/i.test(cleaned) || cleaned === sentence.trim()) return null;
   return cleaned;
 }
 

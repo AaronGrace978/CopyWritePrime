@@ -33,4 +33,19 @@ Fix the broken sentence. Hmm, original had a double But. Wait, let me restructur
 ${cut}`;
     assert.equal(stripLeakedThinking(leak, source), cut);
   });
+
+  it("drops a bare NOOP", () => {
+    assert.equal(stripLeakedThinking("NOOP", source), "");
+  });
+
+  it("drops a polish prompt echoed as copy", () => {
+    const leak = `The task: fix spelling, grammar, missing words, punctuation. Keep voice, slang, rhythm. Don't add ideas, don't get fancier. Don't explain. First character of reply is first character of corrected sentence, or NOOP.
+
+Original text:
+"When I was a young boy, my father once told me"
+
+Fixes needed:
+- "Ai" → "AI" (spelling). Hmm, but keep voice? "Ai" is a misspelling of AI. I think correcting`;
+    assert.equal(stripLeakedThinking(leak, "When I was a young boy, my father once told me that the only limitations are the ones you place on yourself"), "");
+  });
 });
