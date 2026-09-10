@@ -48,4 +48,18 @@ Fixes needed:
 - "Ai" → "AI" (spelling). Hmm, but keep voice? "Ai" is a misspelling of AI. I think correcting`;
     assert.equal(stripLeakedThinking(leak, "When I was a young boy, my father once told me that the only limitations are the ones you place on yourself"), "");
   });
+
+  it("drops the Watch-box dump that restates the em-dash ban", () => {
+    const leak = `The task: fix spelling, grammar, missing words, punctuation. Keep voice, slang, rhythm. Don't add ideas, don't get fancier. No em dashes, no horizontal bars, no "--" as pause. Use period, comma, colon, or new sentence.
+
+Original text:
+"When I was a young boy, my father once told me that the only limitations are the ones you place on yourself, with Ai I personally feel that this technology, this prediction engine"`;
+    assert.equal(
+      stripLeakedThinking(
+        leak,
+        "When I was a young boy, my father once told me that the only limitations are the ones you place on yourself, with Ai I personally feel that this technology, this prediction engine is a way for people to lift any and all restrictions placed on them",
+      ),
+      "",
+    );
+  });
 });
