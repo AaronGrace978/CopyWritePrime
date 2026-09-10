@@ -55,7 +55,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "CopyWritePrime ${{ github.ref_name }}"
-          releaseBody: "Workshop answers instead of hanging on thinking models. Reasoning is off by default. Kokoro reads without freezing the studio. Voice harness learns from a folder of past work."
+          releaseBody: "Flow watches from the rail and never overwrites while you type. Add or replace a paragraph on click. Fix no longer dumps the model's plan onto the page."
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}

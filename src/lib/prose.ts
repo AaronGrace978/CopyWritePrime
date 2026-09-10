@@ -36,6 +36,34 @@ export function lastParagraph(text: string): string {
   return parts[parts.length - 1] ?? "";
 }
 
+export type TextblockRange = { from: number; to: number; after: number; text: string };
+
+/** Last non-empty textblock on the page (paragraph or heading). */
+export function lastTextblock(editor: Editor): TextblockRange | null {
+  return findTextblock(editor, "") ?? null;
+}
+
+/** Last textblock whose trimmed text equals `target`. Falls back to the last block if target is empty. */
+export function findTextblock(editor: Editor, target: string): TextblockRange | null {
+  const needle = target.trim();
+  let last: TextblockRange | null = null;
+  let match: TextblockRange | null = null;
+  editor.state.doc.forEach((node, offset) => {
+    if (!node.isTextblock) return;
+    const text = node.textContent;
+    if (!text.trim()) return;
+    const range: TextblockRange = {
+      from: offset + 1,
+      to: offset + node.nodeSize - 1,
+      after: offset + node.nodeSize,
+      text,
+    };
+    last = range;
+    if (needle && text.trim() === needle) match = range;
+  });
+  return match ?? last;
+}
+
 function escapeHtml(value: string) {
   return value
     .replace(/&/g, "&amp;")

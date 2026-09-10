@@ -26,7 +26,7 @@
   <img src="https://img.shields.io/badge/Kokoro-TTS-e07a5f?style=for-the-badge" alt="Kokoro" />
 </p>
 
-You type messy. **Flow** waits for the pause, fixes the line, lifts it, then ghosts the next words. **Tab** keeps them. **⌘K** drops a prompt on the page. **Scan** a paper — PDF, Word, or paste — and **Complete** writes the submission onto the page. **Workshop** argues the line without moving the page. **Voice** scans a folder of past work and writes like that person. **Listen** reads the page with Kokoro. **Logs** exports or deletes chats. Gold on the page is AI. One click exports **Word**: Times New Roman 12, double-spaced, 1-inch margins. Em dashes are stripped on the way out.
+You type messy. **Flow** waits for the pause, then suggests a rewrite in the rail. **Add suggestion** or **Replace paragraph** when you want it on the page. **⌘K** drops a prompt on the page. **Scan** a paper — PDF, Word, or paste — and **Complete** writes the submission onto the page. **Workshop** argues the line without moving the page. **Voice** scans a folder of past work and writes like that person. **Listen** reads the page with Kokoro. **Logs** exports or deletes chats. Gold on the page is AI. One click exports **Word**: Times New Roman 12, double-spaced, 1-inch margins. Em dashes are stripped on the way out.
 
 Bring your own keys. OpenAI, Anthropic, Gemini, Groq, xAI, Mistral, DeepSeek, OpenRouter, Together, Fireworks, Perplexity, Cohere, **Ollama local**, **Ollama Cloud**, and any OpenAI-compatible endpoint. Keys live in the local Tauri store. Not our servers — there are no servers.
 
@@ -52,10 +52,12 @@ Bring your own keys. OpenAI, Anthropic, Gemini, Groq, xAI, Mistral, DeepSeek, Op
 
 ## Flow
 
-- **Enhance** (default) — pause, then the last line is fixed and sharpened in place. Ghost text continues the thought.
-- **Write** — pause, then typos get cleaned. Ghost text continues in your voice.
-- **Off** — no ghost. Auto-fix can still clean the last line.
-- **Fix last line** / **Enhance last paragraph** — run it now, no waiting.
+- **Enhance** (default) — when you pause, Flow drafts a sharper last paragraph in the **Watch** box. The page does not move.
+- **Write** — pause, then a cleaned last paragraph appears in the Watch box.
+- **Off** — no watching unless Auto-fix is on.
+- **Add suggestion** — drop the suggestion after the paragraph you were writing.
+- **Replace paragraph with suggestion** — swap that paragraph for the suggestion.
+- **Fix last line** / **Enhance last paragraph** — run it now, no waiting. Those still write on the page because you clicked them.
 
 Type bar: **B I U**, **HL** (your highlighter), **AI** (show/hide gold marks), H1 / H2 / Body, Auto / S / M / L / XL / Title, **Listen**. Auto sizes the page to the window. Gold wash is what Flow, Enhance, Complete, or Workshop dropped. **Clear AI marks** keeps the words and drops the gold. **Kill em dashes** (selbar or Flow rail) strips the AI tell off the page. Flow is banned from writing them.
 
@@ -116,17 +118,17 @@ Installers land in `src-tauri/target/release/bundle/`.
 ## Releases
 
 ```bash
-git tag v0.6.2
-git push origin v0.6.2
+git tag v0.6.3
+git push origin v0.6.3
 ```
 
-GitHub Actions builds Windows, macOS (Intel + Apple Silicon), and Linux. Latest: [v0.6.2](https://github.com/AaronGrace978/CopyWritePrime/releases/tag/v0.6.2).
+GitHub Actions builds Windows, macOS (Intel + Apple Silicon), and Linux. Latest: [v0.6.3](https://github.com/AaronGrace978/CopyWritePrime/releases/tag/v0.6.3).
 
 ## Shortcuts
 
 | Key | Action |
 | --- | --- |
-| Tab | Accept Flow ghost text |
+| Tab | (no longer dumps Flow onto the page) |
 | Triple-click / Alt+click | Select the sentence |
 | Esc | Dismiss ghost / overlays / stop Kokoro |
 | ⌘/Ctrl B I U | Bold / italic / underline |

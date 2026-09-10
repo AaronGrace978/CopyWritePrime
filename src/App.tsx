@@ -16,7 +16,6 @@ import {
   DEFAULT_SETTINGS,
   defaultModelFor,
   enhanceSentence,
-  flowContinue,
   hasKey,
   polishSentence,
   transform,
@@ -42,6 +41,8 @@ import {
   findLastTextRange,
   insertAiContent,
   lastParagraph,
+  lastTextblock,
+  findTextblock,
   lastWritingUnit,
   markDocAsAi,
   pagePlain,
@@ -175,7 +176,7 @@ export default function App() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [docs, setDocs] = useState<DocRecord[]>([]);
   const [activeId, setActiveId] = useState("");
-  const [status, setStatus] = useState("Start typing. Flow stays in the sentence.");
+  const [status, setStatus] = useState("Start typing. Flow watches from the rail.");
   const [error, setError] = useState("");
   const [palette, setPalette] = useState(false);
   const [prompt, setPrompt] = useState("");
@@ -199,6 +200,9 @@ export default function App() {
   const [logsOpen, setLogsOpen] = useState(false);
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [kokoroBusy, setKokoroBusy] = useState(false);
+  const [watchPhase, setWatchPhase] = useState<"idle" | "watching" | "drafting">("idle");
+  const [watchSource, setWatchSource] = useState("");
+  const [watchSuggestion, setWatchSuggestion] = useState("");
   const workshopEndRef = useRef<HTMLDivElement>(null);
   const workshopFieldRef = useRef<HTMLTextAreaElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
@@ -210,6 +214,8 @@ export default function App() {
   const flowGenRef = useRef(0);
   const jobGenRef = useRef(0);
   const lastFixedRef = useRef("");
+  const watchSourceRef = useRef("");
+  const watchSuggestionRef = useRef("");
   const briefRef = useRef("");
   const workshopBusyRef = useRef(false);
   const workshopRef = useRef<WorkshopTurn[] | undefined>(undefined);
@@ -254,7 +260,7 @@ export default function App() {
       Underline,
       TextStyle,
       FontSize,
-      Placeholder.configure({ placeholder: "Start typing. Flow fixes the line, then keeps writing with you." }),
+      Placeholder.configure({ placeholder: "Start typing. Flow watches from the rail. It does not write on the page until you ask." }),
       CharacterCount,
       FlowGhost,
       InkMark,
@@ -266,8 +272,10 @@ export default function App() {
       if (flowTimer.current) window.clearTimeout(flowTimer.current);
       ed.commands.clearFlowGhost();
       flowAbortRef.current?.abort();
-      if (workshopBusyRef.current || busyRef.current || railTabRef.current === "workshop") return;
-      flowTimer.current = window.setTimeout(() => void onPauseRef.current(), 850);
+      if (busyRef.current) return;
+      const s = settingsRef.current;
+      if (s.flow !== "off" || s.autoCorrect) setWatchPhase("watching");
+      flowTimer.current = window.setTimeout(() => void onPauseRef.current(), 1400);
     },
     onSelectionUpdate: ({ editor: ed }) => {
       placeSelbarRef.current(ed);
@@ -383,61 +391,78 @@ export default function App() {
 
   async function onPause() {
     const s = settingsRef.current;
-    if (!editor || !hasKey(s) || busyRef.current || workshopBusyRef.current || railTabRef.current === "workshop") return;
+    if (!editor || !hasKey(s) || busyRef.current) return;
+    if (s.flow === "off" && !s.autoCorrect) {
+      setWatchPhase("idle");
+      return;
+    }
+    const block = lastTextblock(editor);
+    const unit = block?.text.trim() ?? "";
+    if (unit.length < 10) {
+      setWatchPhase(watchSuggestionRef.current ? "idle" : "watching");
+      return;
+    }
+    if (unit === watchSourceRef.current && watchSuggestionRef.current) {
+      setWatchPhase("idle");
+      return;
+    }
     const gen = ++flowGenRef.current;
     flowAbortRef.current?.abort();
     const ac = new AbortController();
     flowAbortRef.current = ac;
-
-    if (s.autoCorrect) {
-      const unit = lastWritingUnit(editor.getText());
-      if (unit && unit.length >= 10 && unit !== lastFixedRef.current) {
-        setError("");
-        setStatus(s.flow === "enhance" ? "Enhancing the line…" : "Fixing the line…");
-        try {
-          const next =
-            s.flow === "enhance"
-              ? await enhanceSentence(s, unit, ac.signal)
-              : await polishSentence(s, unit, ac.signal);
-          if (gen !== flowGenRef.current) return;
-          if (next) {
-            applyingRef.current = true;
-            replaceLastOccurrence(editor, unit, next, s.flow === "enhance");
-            lastFixedRef.current = next.replace(/\*\*/g, "").replace(/\*/g, "");
-            applyingRef.current = false;
-            setStatus(s.flow === "enhance" ? "Line enhanced. Tab keeps the next words." : "Line fixed. Tab keeps the next words.");
-          }
-        } catch (e) {
-          if (gen !== flowGenRef.current || isAbortError(e)) return;
-          setError(e instanceof Error ? e.message : String(e));
-        }
-      }
-    }
-
-    if (s.flow === "off" || gen !== flowGenRef.current || workshopBusyRef.current) return;
-    await runFlow(editor.getText(), gen, ac, briefRef.current);
-  }
-  onPauseRef.current = onPause;
-
-  async function runFlow(text: string, gen: number, ac: AbortController, brief?: string) {
-    const s = settingsRef.current;
-    if (s.flow === "off" || !hasKey(s) || !editor) return;
     setError("");
-    setStatus("Flow is drafting…");
+    setWatchPhase("drafting");
+    setStatus("You paused. Flow is drafting a suggestion in the rail.");
     try {
-      let acc = "";
-      await flowContinue(s, text, (chunk) => {
-        if (gen !== flowGenRef.current) return;
-        acc += chunk;
-        editor.commands.setFlowGhost(killEmDashes(acc).replace(/\s+/g, " ").replace(/^[\s,.;:]+/, ""));
-      }, ac.signal, brief);
-      if (gen !== flowGenRef.current || ac.signal.aborted) return;
-      setStatus(acc.trim() ? "Tab to keep the line. Esc to dismiss." : "Flow is listening.");
+      const next =
+        s.flow === "enhance"
+          ? await enhanceSentence(s, unit, ac.signal)
+          : await polishSentence(s, unit, ac.signal);
+      if (gen !== flowGenRef.current) return;
+      if (next && next.trim() && next.trim() !== unit) {
+        const cut = killEmDashes(next).trim();
+        setWatchSource(unit);
+        setWatchSuggestion(cut);
+        watchSourceRef.current = unit;
+        watchSuggestionRef.current = cut;
+        setWatchPhase("idle");
+        setStatus(
+          railTabRef.current === "flow"
+            ? "Suggestion in Flow. The page did not move."
+            : "Suggestion waiting in Flow. The page did not move.",
+        );
+      } else {
+        setWatchPhase("idle");
+        setStatus("Last paragraph looks clean. Still watching.");
+      }
     } catch (e) {
       if (gen !== flowGenRef.current || isAbortError(e)) return;
+      setWatchPhase("idle");
       setError(e instanceof Error ? e.message : String(e));
       setStatus("Flow paused.");
     }
+  }
+  onPauseRef.current = onPause;
+
+  function addWatchSuggestion() {
+    if (!editor || !watchSuggestion.trim()) return;
+    const block = findTextblock(editor, watchSource) ?? lastTextblock(editor);
+    const at = block?.after ?? editor.state.doc.content.size;
+    applyingRef.current = true;
+    insertAiContent(editor, proseToHtml(watchSuggestion), { from: at, to: at });
+    applyingRef.current = false;
+    setStatus("Suggestion added. Your paragraph stayed.");
+  }
+
+  function replaceWatchParagraph() {
+    if (!editor || !watchSuggestion.trim()) return;
+    const block = findTextblock(editor, watchSource) ?? lastTextblock(editor);
+    if (!block) return;
+    applyingRef.current = true;
+    const html = proseToHtml(watchSuggestion);
+    insertAiContent(editor, html, { from: block.from - 1, to: block.after });
+    applyingRef.current = false;
+    setStatus("Paragraph replaced with the suggestion.");
   }
 
   async function runTransform(instruction: string, source?: string) {
@@ -1591,6 +1616,39 @@ export default function App() {
           ) : (
             <>
           <h2>Flow</h2>
+          <div className="watch-box">
+            <div className="watch-status">
+              {watchPhase === "watching"
+                ? "Watching you write. It will not touch the page."
+                : watchPhase === "drafting"
+                  ? "You paused. Drafting a suggestion…"
+                  : watchSuggestion
+                    ? "Suggestion ready. Click to use it."
+                    : "Idle. Type on the sheet. Pause, and a suggestion lands here."}
+            </div>
+            {watchSuggestion ? (
+              <>
+                {watchSource ? (
+                  <p className="watch-source">
+                    Watching: {watchSource.length > 180 ? `${watchSource.slice(0, 180)}…` : watchSource}
+                  </p>
+                ) : null}
+                <pre>{watchSuggestion}</pre>
+                <div className="turn-actions">
+                  <button className="rail-btn" onClick={addWatchSuggestion}>
+                    Add suggestion
+                  </button>
+                  <button className="rail-btn" onClick={replaceWatchParagraph}>
+                    Replace paragraph with suggestion
+                  </button>
+                </div>
+              </>
+            ) : (
+              <p className="kit" style={{ paddingLeft: 0, margin: "8px 0 0" }}>
+                Flow used to rewrite the line under your cursor. Now it only suggests from this box.
+              </p>
+            )}
+          </div>
           <div className="toggles" style={{ padding: 0, marginBottom: 14 }}>
             {(["off", "write", "enhance"] as FlowMode[]).map((mode) => (
               <button
@@ -1604,10 +1662,10 @@ export default function App() {
           </div>
           <p className="kit" style={{ paddingLeft: 0 }}>
             {settings.flow === "off"
-              ? "Ghost text is off. Auto-fix can still clean the last line when you pause."
+              ? "Watch is off unless Auto-fix is on. Nothing writes onto the page until you click."
               : settings.flow === "write"
-                ? "When you pause, Flow fixes typos, then ghosts the next words. Tab keeps them."
-                : "When you pause, Flow fixes the line, lifts it, then ghosts the next words. Tab keeps them."}
+                ? "When you pause, Flow suggests a clean last paragraph in this box. Tab no longer dumps text on the page."
+                : "When you pause, Flow suggests a sharper last paragraph in this box. The sheet stays yours until you add or replace."}
           </p>
           <div className="toggles" style={{ padding: 0, margin: "14px 0" }}>
             <button className={settings.autoCorrect ? "active" : ""} onClick={() => void patchSettings({ autoCorrect: !settings.autoCorrect })}>
