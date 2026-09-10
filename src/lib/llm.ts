@@ -15,6 +15,7 @@ import {
 import { readStream, watchdog, type StreamBatch, type StreamHandlers, type StreamResult } from "./stream";
 import { DEFAULT_SETTINGS, normalizeFlow, normalizeTypeScale, type ChatMessage, type Settings } from "./types";
 import { excerptCorpus } from "./voice";
+import { stripLeakedThinking } from "./copyReply";
 
 export type { ChatMessage, Settings };
 export { DEFAULT_SETTINGS, normalizeFlow, normalizeTypeScale };
@@ -262,10 +263,13 @@ async function errorText(res: Response) {
   }
 }
 
-function cleanModelText(out: string) {
+function copyJob(settings: Settings): Settings {
+  return { ...settings, reasoning: false };
+}
+
+function cleanModelText(out: string, source = "") {
   return killEmDashes(
-    out
-      .trim()
+    stripLeakedThinking(out, source)
       .replace(/^["']|["']$/g, "")
       .replace(/^```(?:\w+)?\n?|\n?```$/g, "")
       .trim(),
@@ -290,7 +294,7 @@ export async function flowContinue(
   const tail = trimmed.slice(-1600);
   const enhance = settings.flow === "enhance";
   return streamChat({
-    settings,
+    settings: copyJob(settings),
     maxTokens: enhance ? 110 : 70,
     temperature: 0.7,
     signal,
@@ -313,7 +317,7 @@ export async function flowContinue(
 export async function polishSentence(settings: Settings, sentence: string, signal?: AbortSignal) {
   let out = "";
   await streamChat({
-    settings,
+    settings: copyJob(settings),
     maxTokens: 160,
     temperature: 0.1,
     signal,
@@ -321,7 +325,7 @@ export async function polishSentence(settings: Settings, sentence: string, signa
       {
         role: "system",
         content: writerSystem(
-          "This writer types fast and messy. Fix spelling, grammar, missing words, and punctuation. Keep their voice, slang, and rhythm. Do not add ideas. Do not get fancier. If it is already correct, return exactly NOOP. Return only the corrected sentence or NOOP.",
+          "This writer types fast and messy. Fix spelling, grammar, missing words, and punctuation. Keep their voice, slang, and rhythm. Do not add ideas. Do not get fancier. Do not plan. Do not explain the edit. If it is already correct, return exactly NOOP. The first character of your reply is the first character of the corrected sentence, or NOOP.",
         ),
       },
       { role: "user", content: sentence },
@@ -330,7 +334,7 @@ export async function polishSentence(settings: Settings, sentence: string, signa
       out += c;
     },
   });
-  const cleaned = cleanModelText(out);
+  const cleaned = cleanModelText(out, sentence);
   if (!cleaned || cleaned === "NOOP" || cleaned === sentence.trim()) return null;
   return cleaned;
 }
@@ -338,7 +342,7 @@ export async function polishSentence(settings: Settings, sentence: string, signa
 export async function enhanceSentence(settings: Settings, sentence: string, signal?: AbortSignal) {
   let out = "";
   await streamChat({
-    settings,
+    settings: copyJob(settings),
     maxTokens: 220,
     temperature: 0.35,
     signal,
@@ -346,7 +350,7 @@ export async function enhanceSentence(settings: Settings, sentence: string, sign
       {
         role: "system",
         content: writerSystem(
-          "This writer types fast and messy. First fix errors. Then make the line one notch clearer and more specific. Same person, same meaning. You may mark one or two punch words with **bold**. No extra sentences. No slogans. If it is already strong and clean, return exactly NOOP. Return only the line or NOOP.",
+          "This writer types fast and messy. First fix errors. Then make the line one notch clearer and more specific. Same person, same meaning. You may mark one or two punch words with **bold**. No extra sentences. No slogans. Do not plan. Do not explain the edit. If it is already strong and clean, return exactly NOOP. The first character of your reply is the first character of the line, or NOOP.",
         ),
       },
       { role: "user", content: sentence },
@@ -355,7 +359,7 @@ export async function enhanceSentence(settings: Settings, sentence: string, sign
       out += c;
     },
   });
-  const cleaned = cleanModelText(out);
+  const cleaned = cleanModelText(out, sentence);
   if (!cleaned || cleaned === "NOOP" || cleaned === sentence.trim()) return null;
   return cleaned;
 }
@@ -364,14 +368,14 @@ export async function transform(settings: Settings, instruction: string, source:
   let out = "";
   const long = source.trim().split(/\s+/).filter(Boolean).length > 80;
   await streamChat({
-    settings,
+    settings: copyJob(settings),
     maxTokens: long ? 4000 : 1800,
     temperature: 0.55,
     messages: [
       {
         role: "system",
         content: writerSystem(
-          "Rewrite or generate copy per the instruction. Return only the copy. You may use markdown: # ## ### headings, **bold**, *italic*. No commentary. No code fences. If the source is long, keep every section. Do not collapse it to one paragraph. Never use an em dash." +
+          "Rewrite or generate copy per the instruction. The first character of your reply is the first character of the copy. Never plan. Never explain the edit. Never quote the instruction. Never list what you changed. Never write notes to yourself. You may use markdown: # ## ### headings, **bold**, *italic*. No commentary. No code fences. If the source is long, keep every section. Do not collapse it to one paragraph. Never use an em dash." +
             briefNote(brief),
         ),
       },
@@ -384,7 +388,7 @@ export async function transform(settings: Settings, instruction: string, source:
       out += c;
     },
   });
-  return cleanModelText(out);
+  return cleanModelText(out, source);
 }
 
 export async function completeFromBrief(
@@ -397,7 +401,7 @@ export async function completeFromBrief(
   const paper = brief.trim().slice(0, 24000);
   const draft = existing.trim().slice(0, 8000);
   return streamChat({
-    settings,
+    settings: copyJob(settings),
     maxTokens: 4000,
     temperature: 0.5,
     signal,
@@ -405,7 +409,7 @@ export async function completeFromBrief(
       {
         role: "system",
         content: writerSystem(
-          "You complete take-homes, briefs, RFPs, and assignments. Read the paper. Infer the required parts, word limits, tone, and any compliance kit. Write the finished submission a strong human would turn in. Honor every constraint. Make guardrails invisible in the copy. Do not list banned phrases. Use markdown headings that match the requested structure (# ## ###). **Bold** sparingly. No preamble, no 'here is the assignment', no commentary, no code fences. Never use an em dash. If a draft is present, keep what works, fill what is missing, and stay on the brief.",
+          "You complete take-homes, briefs, RFPs, and assignments. Read the paper. Infer the required parts, word limits, tone, and any compliance kit. Write the finished submission a strong human would turn in. Honor every constraint. Make guardrails invisible in the copy. Do not list banned phrases. Use markdown headings that match the requested structure (# ## ###). **Bold** sparingly. The first character of your reply is the first character of the submission. No preamble, no 'here is the assignment', no commentary, no code fences, no planning. Never use an em dash. If a draft is present, keep what works, fill what is missing, and stay on the brief.",
         ),
       },
       {
@@ -463,8 +467,8 @@ export async function distillVoice(settings: Settings, corpus: string, signal?: 
   if (excerpt.trim().length < 80) return "";
   let out = "";
   await streamChat({
-    settings,
     skipVoice: true,
+    settings: copyJob(settings),
     maxTokens: 500,
     temperature: 0.2,
     signal,

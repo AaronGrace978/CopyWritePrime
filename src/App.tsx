@@ -23,6 +23,7 @@ import {
   type Settings,
 } from "./lib/llm";
 import { isAbortError } from "./lib/abort";
+import { stripLeakedThinking } from "./lib/copyReply";
 import { killEmDashes } from "./lib/dashes";
 import { filesFromList, joinCorpus, pickWritingFolder, samplesOf, type CorpusFile } from "./lib/corpus";
 import { downloadText } from "./lib/download";
@@ -75,10 +76,10 @@ import {
 import type { FlowMode, TypeScale } from "./lib/types";
 
 const QUICK = [
-  { label: "Fix", prompt: "Fix spelling, grammar, missing words, and punctuation. Keep the voice. No extra ideas. No preamble. Keep every section." },
-  { label: "Enhance", prompt: "Fix errors, then make this one notch clearer and more specific. Same person. Keep the same structure and length. Do not drop sections. You may **bold** punch phrases. Use headings if they were headings. No em dashes. No preamble." },
-  { label: "Tighten", prompt: "Tighten this copy. Keep the voice and the structure. Cut fat. Do not drop sections. No preamble." },
-  { label: "Human", prompt: "Rewrite so it sounds like a person wrote it for a person. Kill marketing fog. Kill every em dash. Keep the meaning, structure, and length. Do not drop sections." },
+  { label: "Fix", prompt: "Fix spelling, grammar, missing words, and punctuation. Keep the voice. No extra ideas. Keep every section. Reply with the copy only. Do not plan. Do not explain. No preamble." },
+  { label: "Enhance", prompt: "Fix errors, then make this one notch clearer and more specific. Same person. Keep the same structure and length. Do not drop sections. You may **bold** punch phrases. Use headings if they were headings. No em dashes. Reply with the copy only. Do not plan. Do not explain. No preamble." },
+  { label: "Tighten", prompt: "Tighten this copy. Keep the voice and the structure. Cut fat. Do not drop sections. Reply with the copy only. Do not plan. Do not explain. No preamble." },
+  { label: "Human", prompt: "Rewrite so it sounds like a person wrote it for a person. Kill marketing fog. Kill every em dash. Keep the meaning, structure, and length. Do not drop sections. Reply with the copy only. Do not plan. Do not explain." },
 ];
 
 const SIZES = [
@@ -1068,6 +1069,7 @@ export default function App() {
         paint();
       }, ac.signal);
       if (job !== jobGenRef.current) return;
+      acc = stripLeakedThinking(acc, existing);
       paint(true);
       markDocAsAi(editor);
       setStatus("On the page. Gold is AI. Edit from here. Flow still has the brief.");
